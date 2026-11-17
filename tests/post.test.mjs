@@ -669,3 +669,11 @@ test('buildAd: a flag field that repeats a fixed "0" is not an error and stays f
     assert.equal(adOf({ delivery_enabled: v }, { fields: [...FIELDS, flag] }).delivery_enabled, '0');
   }
 });
+
+// ---- audit: a number field given as a JSON number ----
+
+test('buildAd: a number field given as a JSON number is stored as a string; NaN and Infinity -> bad_value', () => {
+  assert.equal(adOf({ mileage: 2020 }).mileage, '2020');
+  assert.equal(adOf({ mileage: '2020' }).mileage, '2020');
+  for (const bad of [NaN, Infinity, -Infinity]) assert.equal(errorsOf({ mileage: bad }).mileage, 'bad_value');
+});

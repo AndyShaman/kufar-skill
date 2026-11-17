@@ -621,3 +621,33 @@ test('buildEdit: a change that repeats the saved term is not an error, with spac
   assert.equal(ad.type, 'sell');
   assert.equal(ad.delivery_enabled, '0');
 });
+
+// ---- audit: a service flag that is off ----
+
+const DELIVERY_FIELD = { name: 'delivery_enabled', label: 'Доставка', required: false, kind: 'flag' };
+const WITH_DELIVERY = [...FIELDS, DELIVERY_FIELD];
+
+test('buildEdit: delivery_enabled "0" over a saved "0" or no value is NO_CHANGES', async () => {
+  const { buildEdit } = await edit();
+  const noValue = { ...SAVED };
+  delete noValue.delivery_enabled;
+  for (const saved of [SAVED, noValue]) {
+    await failure(Promise.resolve().then(() => buildEdit(args({
+      saved, changes: { delivery_enabled: '0' }, fields: WITH_DELIVERY, savedFields: WITH_DELIVERY,
+    }))), 'NO_CHANGES');
+  }
+});
+
+test('buildEdit: delivery_enabled "0" next to a real change does not appear in changed', async () => {
+  const { buildEdit } = await edit();
+  const r = buildEdit(args({
+    changes: { delivery_enabled: '0', body: 'Новое описание' }, fields: WITH_DELIVERY, savedFields: WITH_DELIVERY,
+  }));
+  assert.deepStrictEqual(r.changed.map((c) => c.name), ['body']);
+});
+
+test('buildEdit: a number given as a JSON number is accepted and stored as a string', async () => {
+  const { ad } = await build({ changes: { mileage: 2020 } });
+  assert.equal(ad.mileage, '2020');
+  assert.equal((await errorsOf({ changes: { mileage: NaN } })).mileage, 'bad_value');
+});

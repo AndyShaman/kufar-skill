@@ -521,3 +521,17 @@ test('subject with a clock: age_days, stale and bumped by the clock', async () =
   assert.equal(r.subject.stale, true);
   assert.equal(r.subject.bumped, true);
 });
+
+test('like with user params: the search carries the by characteristic and the user params', async () => {
+  const tr = mk(() => pageOf(series(1000000001, [620, ...SIX])));
+  await estimatePrice(tr, { like: '1000000001', by: ['phm'], params: { cnd: '1' } });
+  const q = searches(tr)[0].query;
+  assert.equal(q.phm, '5380');
+  assert.equal(q.cnd, '1');
+});
+
+test('like with user params: the user value wins over a by characteristic with the same code', async () => {
+  const tr = mk(() => pageOf(series(1000000001, [620, ...SIX])));
+  await estimatePrice(tr, { like: '1000000001', by: ['phm'], params: { phm: '9999' } });
+  assert.equal(searches(tr)[0].query.phm, '9999');
+});

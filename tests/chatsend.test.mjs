@@ -671,3 +671,23 @@ test('sendMessage: with conversationId the frame is still send_message', async (
   ws.onerror();
   await s;
 });
+
+test('sendMessage adId: SEND_UNCONFIRMED tells to check inbox, with conversationId it tells to check chat', async () => {
+  for (const event of ['onerror', 'onclose']) {
+    const a = await openedAd();
+    a.ws[event](new Error('boom'));
+    const ea = (await a.s).error;
+    assert.equal(ea.code, 'SEND_UNCONFIRMED', event);
+    assert.match(ea.message, /inbox/, event);
+    assert.doesNotMatch(ea.message, /\bchat\b/, event);
+    const b = await opened();
+    b.ws[event](new Error('boom'));
+    const eb = (await b.s).error;
+    assert.equal(eb.code, 'SEND_UNCONFIRMED', event);
+    assert.match(eb.message, /\bchat\b/, event);
+  }
+  const c = await openedAd({ timeoutMs: 40 });
+  const ec = (await c.s).error;
+  assert.equal(ec.code, 'SEND_UNCONFIRMED');
+  assert.match(ec.message, /inbox/);
+});

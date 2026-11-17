@@ -1075,3 +1075,138 @@ test('the version in the code is the version of package.json and of SKILL.md', a
   assert.equal(VERSION, pkg.version);
   assert.match(skill, new RegExp(`version: "${VERSION.replaceAll('.', '\\.')}"`));
 });
+
+// ---- audit: login keeps the specific BAD_ARGS message ----
+
+test('kufar login --phone/--code with a bad value: BAD_ARGS carries the message of requestCode/confirmCode', async () => {
+  const { requestCode, confirmCode } = await import('../scripts/lib/codelogin.mjs');
+  const messageOf = async (p) => {
+    try { await p; } catch (e) { return e.message; }
+    return assert.fail('no error');
+  };
+  const dir = await tmpDir();
+  const phoneMsg = await messageOf(requestCode({ stateDir: dir, phone: 'abc' }));
+  const codeMsg = await messageOf(confirmCode({ stateDir: dir, code: 'abc' }));
+  for (const [args, msg] of [[['login', '--phone', 'abc'], phoneMsg], [['login', '--code', 'abc'], codeMsg]]) {
+    const r = await run(args);
+    assert.equal(r.json.error.code, 'BAD_ARGS');
+    assert.ok(r.json.error.message.includes(msg), `${r.json.error.message} lacks ${msg}`);
+  }
+});
+
+// ---- audit: post/edit previews through the CLI with a fake fetch ----
+// The CLI has no way to point at another host, so a preload module (written into a temp folder) replaces
+// globalThis.fetch; the category tree and the form come from the cache files seeded in the state folder.
+
+const FAKE_FETCH_SRC = `
+import fs from 'node:fs';
+const log = process.env.FAKE_LOG;
+const items = JSON.parse(process.env.FAKE_ITEMS || '{}');
+const saved = JSON.parse(process.env.FAKE_SAVED || 'null');
+const json = (body) => new Response(JSON.stringify(body), { status: 200 });
+globalThis.fetch = async (url) => {
+  const u = new URL(url);
+  const status = u.searchParams.get('status');
+  fs.appendFileSync(log, JSON.stringify({ path: u.pathname, status }) + '\\n');
+  if (u.pathname === '/my-items-v2/v2/items') return json({ ads: items[status] ?? [] });
+  if (u.pathname.startsWith('/insertion/v1/processing/load/')) return json({ result: saved });
+  return new Response('{}', { status: 404 });
+};
+`;
+
+const refOf = (name, ui, over = {}) => ({
+  name, required: false, type: 'string', multi: false, ui_component: { type: ui }, actions: [],
+  labels: { name: { ru: `L-${name}` } }, values: [], ...over,
+});
+const FORM_REFS = {
+  1: refOf('subject', 'input', { required: true }),
+  2: refOf('body', 'textarea', { required: true }),
+  3: refOf('delivery_enabled', 'checkbox'),
+  4: refOf('phone_hidden', 'checkbox'),
+};
+const TREE = { categories: [{ id: 1000, name_ru: 'Родитель', subcategories: [{ id: 2040, name_ru: 'Запчасти' }] }] };
+const MY_CONTACT = { name: 'Тестовый Продавец', phone: '375290000000', email: 'a@example.com' };
+
+// runs a CLI command in a fresh state folder with a saved key, the cached tree and form, and the fake fetch
+async function runFake(args, { items = {}, saved = null, draft } = {}) {
+  const dir = await tmpDir();
+  const stateDir = path.join(dir, 'state');
+  await fs.mkdir(path.join(stateDir, 'cache'), { recursive: true });
+  const cache = (file, data) => fs.writeFile(path.join(stateDir, 'cache', file), JSON.stringify({ saved_at: Date.now(), data }));
+  await cache('category-tree.json', TREE);
+  await cache('form-2040.json', {
+    ad_metadata: { parameters: { refs: FORM_REFS, rules: [{ rule: {}, refs: Object.keys(FORM_REFS) }] }, parameters_order: { refs: { main: Object.keys(FORM_REFS) } } },
+  });
+  const login = runIn(stateDir, ['login', '--token-stdin'], liveToken());
+  assert.equal(login.status, 0, login.stdout);
+  const preload = path.join(dir, 'fake-fetch.mjs');
+  await fs.writeFile(preload, FAKE_FETCH_SRC);
+  const logFile = path.join(dir, 'requests.log');
+  await fs.writeFile(logFile, '');
+  const file = path.join(dir, 'input.json');
+  await fs.writeFile(file, JSON.stringify(draft));
+  const r = spawnSync(process.execPath, ['--import', preload, CLI, ...args(file)], {
+    cwd: ROOT, encoding: 'utf8', timeout: 30000,
+    env: { ...process.env, KUFAR_STATE_DIR: stateDir, FAKE_LOG: logFile, FAKE_ITEMS: JSON.stringify(items), FAKE_SAVED: JSON.stringify(saved) },
+  });
+  let json;
+  try { json = JSON.parse(r.stdout); } catch { json = undefined; }
+  const requests = (await fs.readFile(logFile, 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  return { status: r.status, json, stdout: r.stdout, requests, contactStatuses: requests.filter((q) => q.path === '/my-items-v2/v2/items').map((q) => q.status) };
+}
+
+const POST_DRAFT = { category: '2040', subject: 'Катушка зажигания', body: 'Новая, в упаковке', price: 59, ...MY_CONTACT };
+
+test('kufar post preview: a flag field set to "1" shows "да"', async () => {
+  const r = await runFake((f) => ['post', '--draft', f], { draft: { ...POST_DRAFT, phone_hidden: '1' } });
+  assert.equal(r.json?.posted, false, r.stdout);
+  assert.equal(r.json.preview.fields.find((x) => x.name === 'phone_hidden').text, 'да');
+});
+
+test('kufar post preview: a flag field that is "0" in the ad does not show "да"', async () => {
+  const r = await runFake((f) => ['post', '--draft', f], { draft: POST_DRAFT });
+  assert.equal(r.json?.posted, false, r.stdout);
+  const field = r.json.preview.fields.find((x) => x.name === 'delivery_enabled');
+  assert.equal(field.value, '0');
+  assert.equal(field.text, 'нет');
+});
+
+const NO_CONTACT_DRAFT = { category: '2040', subject: 'Катушка зажигания', body: 'Новая, в упаковке', price: 59 };
+
+test('kufar post: no active listing, the contacts come from the next status that has one', async () => {
+  const r = await runFake((f) => ['post', '--draft', f], {
+    draft: NO_CONTACT_DRAFT, items: { active: [], inactive: [], deactivated: [MY_CONTACT] },
+  });
+  assert.equal(r.json?.posted, false, r.stdout);
+  assert.deepEqual(r.contactStatuses, ['active', 'inactive', 'deactivated']);
+});
+
+test('kufar post: an active listing gives the contacts with one request', async () => {
+  const r = await runFake((f) => ['post', '--draft', f], {
+    draft: NO_CONTACT_DRAFT, items: { active: [MY_CONTACT], inactive: [MY_CONTACT] },
+  });
+  assert.equal(r.json?.posted, false, r.stdout);
+  assert.deepEqual(r.contactStatuses, ['active']);
+});
+
+const SAVED_AD = {
+  category: '2040', type: 'sell', company_ad: '0', language: 'ru', currency: 'BYR', price: '5900', remuneration_type: '1',
+  delivery_enabled: '0', safedeal_enabled: '0', name: 'Тест', phone: '375290000000',
+  subject: 'Катушка зажигания', body: 'Новая, в упаковке', list_id: '1000000001', images: [],
+};
+
+test('kufar edit: no active listing, the email comes from the next status that has one', async () => {
+  const r = await runFake((f) => ['edit', '1000000001', '--changes', f], {
+    draft: { subject: 'Новое название' }, saved: SAVED_AD, items: { active: [], inactive: [], refused: [MY_CONTACT] },
+  });
+  assert.equal(r.json?.edited, false, r.stdout);
+  assert.deepEqual(r.contactStatuses, ['active', 'inactive', 'deactivated', 'pending_slot', 'refused']);
+});
+
+test('kufar edit: an active listing gives the email with one request', async () => {
+  const r = await runFake((f) => ['edit', '1000000001', '--changes', f], {
+    draft: { subject: 'Новое название' }, saved: SAVED_AD, items: { active: [MY_CONTACT], inactive: [MY_CONTACT] },
+  });
+  assert.equal(r.json?.edited, false, r.stdout);
+  assert.deepEqual(r.contactStatuses, ['active']);
+});
