@@ -647,3 +647,18 @@ test('titleHints: a non-string gives an empty list', async () => {
     assert.deepEqual(await hints(v), []);
   }
 });
+
+// ---- buildAd: a form field named like a fixed term of the listing ----
+// Seen in a live form: in some categories `type` is a required choice field (sell / let).
+
+const TYPE_FIELD = { name: 'type', label: 'Я ищу', required: true, kind: 'choice', values: val('sell', 'let') };
+
+test('buildAd: a form field with the fixed value passes and the term stays fixed', () => {
+  assert.equal(adOf({ type: 'sell' }, { fields: [...FIELDS, TYPE_FIELD] }).type, 'sell');
+});
+
+test('buildAd: a form field cannot change a fixed term of the listing -> fixed', () => {
+  assert.equal(errorsOf({ type: 'let' }, { fields: [...FIELDS, TYPE_FIELD] }).type, 'fixed');
+  const flag = { name: 'delivery_enabled', label: 'Доставка', required: false, kind: 'flag' };
+  assert.equal(errorsOf({ delivery_enabled: '1' }, { fields: [...FIELDS, flag] }).delivery_enabled, 'fixed');
+});

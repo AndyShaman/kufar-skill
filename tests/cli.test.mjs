@@ -1049,3 +1049,25 @@ test('kufar send --ad with a saved key and a text that holds the key -> TEXT_HAS
   assert.ok(!r.stdout.includes(token), 'the key is in the output');
   assert.ok(!r.stdout.includes('вот мой ключ'), 'the text is in the output');
 });
+
+// ---- the installed skill: only SKILL.md, scripts, references and assets are copied ----
+
+test('the utility runs from a folder that holds scripts only, without package.json', async () => {
+  const { mkdtemp, cp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = await mkdtemp(join(tmpdir(), 'kufar-install-'));
+  await cp(new URL('../scripts', import.meta.url), join(dir, 'scripts'), { recursive: true });
+  const r = spawnSync(process.execPath, [join(dir, 'scripts', 'kufar.mjs'), 'nosuchcommand'], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.equal(JSON.parse(r.stdout).error.code, 'BAD_ARGS');
+});
+
+test('the version in the code is the version of package.json and of SKILL.md', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { VERSION } = await import('../scripts/lib/transport.mjs');
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const skill = await readFile(new URL('../SKILL.md', import.meta.url), 'utf8');
+  assert.equal(VERSION, pkg.version);
+  assert.match(skill, new RegExp(`version: "${VERSION.replaceAll('.', '\\.')}"`));
+});

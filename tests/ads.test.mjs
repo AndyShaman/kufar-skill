@@ -4,24 +4,24 @@ import { parseAdRef, normalizeAd } from '../scripts/lib/ads.mjs';
 import { RAW_AD, EXPECTED_AD, rawAd, throwsCode } from './helpers.mjs';
 
 test('parseAdRef accepts a bare number', () => {
-  assert.equal(parseAdRef('1095520827'), '1095520827');
+  assert.equal(parseAdRef('1000000001'), '1000000001');
 });
 
 test('parseAdRef accepts the three link kinds', () => {
   for (const u of [
-    'https://www.kufar.by/item/1095520827',
-    'https://re.kufar.by/vi/1095520827',
-    'https://auto.kufar.by/vi/1095520827',
-  ]) assert.equal(parseAdRef(u), '1095520827');
+    'https://www.kufar.by/item/1000000001',
+    'https://re.kufar.by/vi/1000000001',
+    'https://auto.kufar.by/vi/1000000001',
+  ]) assert.equal(parseAdRef(u), '1000000001');
 });
 
 test('parseAdRef handles query and trailing slash', () => {
-  assert.equal(parseAdRef('https://www.kufar.by/item/1095520827?searchId=abc'), '1095520827');
-  assert.equal(parseAdRef('https://www.kufar.by/item/1095520827/'), '1095520827');
+  assert.equal(parseAdRef('https://www.kufar.by/item/1000000001?searchId=abc'), '1000000001');
+  assert.equal(parseAdRef('https://www.kufar.by/item/1000000001/'), '1000000001');
 });
 
 test('parseAdRef rejects foreign hosts and garbage', () => {
-  for (const x of ['https://example.com/item/1095520827', 'https://notkufar.by/item/1095520827', 'abc', '', 'not-a-ref']) {
+  for (const x of ['https://example.com/item/1000000001', 'https://notkufar.by/item/1000000001', 'abc', '', 'not-a-ref']) {
     throwsCode(() => parseAdRef(x), 'BAD_AD_REF');
   }
 });

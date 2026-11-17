@@ -599,3 +599,17 @@ test('submitEdit: the record holds neither the key nor the text of the listing',
   assert.ok(!text.includes(SUBMIT_AD.subject));
   assert.deepEqual(Object.keys(JSON.parse(text)).sort(), ['at', 'code', 'id']);
 });
+
+// ---- buildEdit: a form field named like a term taken as saved ----
+
+const TYPE_FIELD = { name: 'type', label: 'Я ищу', required: true, kind: 'choice', values: val('sell', 'let') };
+const withType = (changes) => ({ changes, fields: [...FIELDS, TYPE_FIELD], savedFields: [...FIELDS, TYPE_FIELD] });
+
+test('buildEdit: a change cannot replace a term taken as saved -> fixed', async () => {
+  assert.equal((await errorsOfS({}, withType({ type: 'let' }))).type, 'fixed');
+});
+
+test('buildEdit: the saved value of such a field is kept when other fields change', async () => {
+  const { ad } = await buildS({}, withType({ body: 'Новое описание' }));
+  assert.equal(ad.type, 'sell');
+});
