@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { KufarError } from './lib/errors.mjs';
@@ -11,6 +12,10 @@ import { estimatePrice } from './lib/price.mjs';
 import {
   watchAdd, watchCheck, watchList, watchRemove, trackAdd, trackCheck, trackList, trackRemove,
 } from './lib/watch.mjs';
+import { saveToken, loadToken, authStatus, logout } from './lib/auth.mjs';
+import { startLogin, runLoginWorker, loginWindowStatus, stopLoginWindow, sweepLoginProfiles } from './lib/browser.mjs';
+import { requestCode, confirmCode } from './lib/codelogin.mjs';
+import { myListings, inbox, chat } from './lib/account.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const bad = (message, details) => new KufarError('BAD_ARGS', message, details);
@@ -69,6 +74,73 @@ function parseParams(list) {
   return params;
 }
 
+const PAGE_OPTIONS = { limit: { type: 'string' }, offset: { type: 'string' } };
+const page = (v) => ({ limit: num(v.limit, '--limit'), offset: num(v.offset, '--offset') });
+
+// one fixed hint for every bad login argument: an agent that wrote `login <key>` must not get the key back
+const loginHint = () => new KufarError('BAD_ARGS',
+  'login: без опций, --wait SEC, --phone НОМЕР, --code КОД или --token-stdin; ключ аргументом не передаётся');
+const LOGIN_OPTIONS = { wait: { type: 'string' }, phone: { type: 'string' }, code: { type: 'string' }, 'token-stdin': { type: 'boolean' } };
+
+function parseWait(v) {
+  if (v === undefined) return 300;
+  if (!/^\d+$/.test(v) || Number(v) < 30 || Number(v) > 900) throw loginHint();
+  return Number(v);
+}
+
+async function readStdin(limit = 16 * 1024) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of process.stdin) {
+    size += chunk.length;
+    if (size > limit) throw new KufarError('BAD_TOKEN', 'Это не похоже на ключ входа Куфара');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+const clearLoginWindow = (stateDir) => fs.rm(path.join(stateDir, 'login-window.json'), { force: true });
+
+async function login(args) {
+  let r;
+  try {
+    r = parseArgs({ args, options: LOGIN_OPTIONS, allowPositionals: true, strict: true });
+  } catch {
+    throw loginHint();
+  }
+  const v = r.values;
+  if (r.positionals.length || Object.keys(LOGIN_OPTIONS).filter((k) => v[k] !== undefined).length > 1) throw loginHint();
+  const wait = parseWait(v.wait);
+  const stateDir = resolveStateDir();
+  if (v['token-stdin']) {
+    const status = await saveToken(stateDir, await readStdin());
+    await clearLoginWindow(stateDir);
+    return status;
+  }
+  if (v.phone === undefined && v.code === undefined) return startLogin({ stateDir, waitMs: wait * 1000 });
+  try {
+    if (v.phone !== undefined) return await requestCode({ stateDir, phone: v.phone });
+    const status = await confirmCode({ stateDir, code: v.code });
+    await clearLoginWindow(stateDir);
+    return status;
+  } catch (e) {
+    // only a bad phone or code is BAD_ARGS here
+    if (e.code === 'BAD_ARGS') throw loginHint();
+    throw e;
+  }
+}
+
+// hidden command: holds the login window; prints nothing and always exits 0
+async function loginWorker(args) {
+  const ac = new AbortController();
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => ac.abort());
+  try {
+    const { values } = parseArgs({ args, options: { wait: { type: 'string' } }, strict: true });
+    await runLoginWorker({ stateDir: resolveStateDir(), waitMs: parseWait(values.wait) * 1000, signal: ac.signal });
+  } catch { /* nothing to print to */ }
+  process.exit(0);
+}
+
 const csv = (v) => (v === undefined ? undefined : v.split(',').map((x) => x.trim()).filter(Boolean));
 
 function filterOpts(v) {
@@ -87,7 +159,8 @@ function filterOpts(v) {
 
 function getCtx() {
   const stateDir = resolveStateDir();
-  return { stateDir, transport: createTransport({ stateDir }), now: Date.now };
+  const now = Date.now;
+  return { stateDir, transport: createTransport({ stateDir, getToken: () => loadToken(stateDir, now) }), now };
 }
 
 async function getClockCtx() {
@@ -170,18 +243,60 @@ async function run(argv) {
       if (sub === 'remove') return trackRemove(getCtx(), parse(args, {}, 1).arg);
       throw bad('track: add, check, list или remove', { sub });
     }
+    case 'login':
+      return login(rest);
+    case 'logout': {
+      parse(rest, {});
+      const stateDir = resolveStateDir();
+      await stopLoginWindow(stateDir);
+      await sweepLoginProfiles(stateDir);
+      return logout(stateDir);
+    }
+    case 'whoami': {
+      parse(rest, {});
+      const stateDir = resolveStateDir();
+      const status = await authStatus(stateDir);
+      // the path is for moving the key to a server; the content is never printed
+      if (status.logged_in) return { ...status, auth_file: path.resolve(stateDir, 'auth.json') };
+      const loginState = await loginWindowStatus(stateDir);
+      return loginState ? { ...status, login: loginState } : status;
+    }
+    case 'my': {
+      const { values } = parse(rest, { status: { type: 'string' }, ...PAGE_OPTIONS });
+      return myListings(getCtx().transport, { status: values.status, ...page(values) });
+    }
+    case 'inbox': {
+      const { values } = parse(rest, { unread: { type: 'boolean' }, ...PAGE_OPTIONS });
+      return inbox(getCtx().transport, { unread: values.unread, ...page(values) });
+    }
+    case 'chat': {
+      const { values, arg } = parse(rest, PAGE_OPTIONS, 1);
+      return chat(getCtx().transport, arg, page(values));
+    }
     default:
-      throw bad('Команды: categories, params, search, item, price, watch, track', { command: cmd ?? null });
+      throw bad('Команды: categories, params, search, item, price, watch, track, login, logout, whoami, my, inbox, chat',
+        { command: cmd ?? null });
   }
 }
 
+// rule 4: a word longer than 40 characters is hidden in a printed error, so a key passed by mistake to any command is not echoed
+const HIDDEN = '<скрыто>';
+const hide = (v) => {
+  if (typeof v === 'string') return v.replace(/\S{41,}/gu, HIDDEN);
+  if (Array.isArray(v)) return v.map(hide);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, hide(x)]));
+  return v;
+};
+
 const print = (obj) => process.stdout.write(`${JSON.stringify(obj, (k, v) => (k === 'seller_key' ? undefined : v), 2)}\n`);
+
+if (process.argv[2] === 'login-worker') await loginWorker(process.argv.slice(3));
 
 try {
   print(await run(process.argv.slice(2)));
 } catch (e) {
   print({ error: e instanceof KufarError
-    ? { code: e.code, message: e.message, details: e.details }
-    : { code: 'INTERNAL', message: String(e?.message ?? e) } });
+    ? { code: e.code, message: hide(e.message), details: hide(e.details) }
+    : { code: 'INTERNAL', message: hide(String(e?.message ?? e)) } });
   process.exitCode = 1;
 }
