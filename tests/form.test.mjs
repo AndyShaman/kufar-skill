@@ -408,3 +408,26 @@ test('typeField: of several active descriptions the first in parameters_order wi
   });
   assert.deepEqual(typeField(b, V), { name: 'second', url_name: 'two' });
 });
+
+// Kufar cuts a published title at 50 characters, whatever length its form description allows (seen live 2026-11-17)
+test('resolveForm: subject max is capped at 50 when the form allows more', () => {
+  const b = boot({ refs: { 1: f('subject', { ui_component: ui('input'), actions: vlen({ min: 2, max: 100 }) }) } });
+  const out = resolveForm(b, V)[0];
+  assert.equal(out.min, 2);
+  assert.equal(out.max, 50);
+});
+
+test('resolveForm: subject without v_length still gets max 50', () => {
+  const b = boot({ refs: { 1: f('subject', { ui_component: ui('input') }) } });
+  assert.equal(resolveForm(b, V)[0].max, 50);
+});
+
+test('resolveForm: subject with a smaller max keeps it, other text fields are not capped', () => {
+  const b = boot({ refs: {
+    1: f('subject', { ui_component: ui('input'), actions: vlen({ min: 2, max: 30 }) }),
+    2: f('body', { ui_component: ui('text_area'), actions: vlen({ min: 20, max: 4000 }) }),
+  } });
+  const out = resolveForm(b, V);
+  assert.equal(out[0].max, 30);
+  assert.equal(out[1].max, 4000);
+});
