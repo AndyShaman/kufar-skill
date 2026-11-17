@@ -1052,13 +1052,17 @@ test('kufar send --ad with a saved key and a text that holds the key -> TEXT_HAS
 
 // ---- the installed skill: only SKILL.md, scripts, references and assets are copied ----
 
-test('the utility runs from a folder that holds scripts only, without package.json', async () => {
-  const { mkdtemp, cp } = await import('node:fs/promises');
+test('the utility runs from a folder that holds scripts only, without package.json', async (t) => {
+  const { mkdtemp, cp, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const dir = await mkdtemp(join(tmpdir(), 'kufar-install-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
   await cp(new URL('../scripts', import.meta.url), join(dir, 'scripts'), { recursive: true });
-  const r = spawnSync(process.execPath, [join(dir, 'scripts', 'kufar.mjs'), 'nosuchcommand'], { encoding: 'utf8' });
+  // its own state folder: a test never touches the real one
+  const r = spawnSync(process.execPath, [join(dir, 'scripts', 'kufar.mjs'), 'nosuchcommand'], {
+    encoding: 'utf8', env: { ...process.env, KUFAR_STATE_DIR: join(dir, 'state') },
+  });
   assert.equal(r.status, 1);
   assert.equal(JSON.parse(r.stdout).error.code, 'BAD_ARGS');
 });

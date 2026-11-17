@@ -613,3 +613,11 @@ test('buildEdit: the saved value of such a field is kept when other fields chang
   const { ad } = await buildS({}, withType({ body: 'Новое описание' }));
   assert.equal(ad.type, 'sell');
 });
+
+test('buildEdit: a change that repeats the saved term is not an error, with spaces around too', async () => {
+  const flag = { name: 'delivery_enabled', label: 'Доставка', required: false, kind: 'flag' };
+  const fields = [...FIELDS, TYPE_FIELD, flag];
+  const { ad } = await buildS({}, { changes: { type: ' sell ', delivery_enabled: '0', body: 'Новое описание' }, fields, savedFields: fields });
+  assert.equal(ad.type, 'sell');
+  assert.equal(ad.delivery_enabled, '0');
+});

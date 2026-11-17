@@ -662,3 +662,10 @@ test('buildAd: a form field cannot change a fixed term of the listing -> fixed',
   const flag = { name: 'delivery_enabled', label: 'Доставка', required: false, kind: 'flag' };
   assert.equal(errorsOf({ delivery_enabled: '1' }, { fields: [...FIELDS, flag] }).delivery_enabled, 'fixed');
 });
+
+test('buildAd: a flag field that repeats a fixed "0" is not an error and stays fixed', () => {
+  const flag = { name: 'delivery_enabled', label: 'Доставка', required: false, kind: 'flag' };
+  for (const v of ['0', false]) {
+    assert.equal(adOf({ delivery_enabled: v }, { fields: [...FIELDS, flag] }).delivery_enabled, '0');
+  }
+});
