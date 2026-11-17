@@ -15,7 +15,9 @@ import {
 import { saveToken, loadToken, authStatus, logout, sweepIdleKey, idleError } from './lib/auth.mjs';
 import { startLogin, runLoginWorker, loginWindowStatus, stopLoginWindow, sweepLoginProfiles } from './lib/browser.mjs';
 import { requestCode, confirmCode } from './lib/codelogin.mjs';
-import { myListings, inbox, chat } from './lib/account.mjs';
+import { myListings, inbox, chat, sendTarget } from './lib/account.mjs';
+import { checkText, confirmCode as previewCode, sendMessage } from './lib/chatsend.mjs';
+import { UUID_RE } from './lib/transport.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const bad = (message, details) => new KufarError('BAD_ARGS', message, details);
@@ -164,7 +166,7 @@ function getCtx() {
   const stateDir = resolveStateDir();
   const now = Date.now;
   const getToken = () => (idleRemoved ? Promise.reject(idleError()) : loadToken(stateDir, now));
-  return { stateDir, transport: createTransport({ stateDir, getToken }), now };
+  return { stateDir, transport: createTransport({ stateDir, getToken }), now, getToken };
 }
 
 async function sweepIdle() {
@@ -178,6 +180,28 @@ async function sweepIdle() {
 async function getClockCtx() {
   const ctx = getCtx();
   return { ...ctx, clock: await loadClock(ctx) };
+}
+
+const SEND_NEXT = 'Покажите пользователю, кому и что уходит. После его согласия повторите команду с тем же текстом и --confirm <код>';
+
+async function send(args) {
+  const { values, arg: id } = parse(args, { text: { type: 'string' }, confirm: { type: 'string' } }, 1);
+  if (!UUID_RE.test(id)) throw bad('Нужен номер диалога (id из inbox)');
+  if (values.text === undefined) throw bad('Нужен текст: --text "<текст>"');
+  if (values.confirm !== undefined && !/^[0-9a-f]{12}$/.test(values.confirm)) throw bad('--confirm: код из 12 знаков 0-9a-f из предпросмотра');
+  const ctx = getCtx();
+  const token = await ctx.getToken();
+  const text = checkText(values.text, token);
+  const target = await sendTarget(ctx.transport, id);
+  const code = previewCode(id, text);
+  if (values.confirm === undefined) {
+    return { sent: false, preview: { ...target, text, chars: text.length }, confirm: code, next: SEND_NEXT };
+  }
+  if (values.confirm !== code) {
+    throw new KufarError('CONFIRM_MISMATCH', 'Диалог или текст не совпадают с предпросмотром. Покажите пользователю новый предпросмотр');
+  }
+  const { message_id, at } = await sendMessage({ token, conversationId: id, text });
+  return { sent: true, conversation_id: id, to: target.to, message_id, at };
 }
 
 const categoryTree = (ctx) => cached(path.join(ctx.stateDir, 'cache', 'category-tree.json'), DAY,
@@ -288,8 +312,10 @@ async function run(argv) {
       const { values, arg } = parse(rest, PAGE_OPTIONS, 1);
       return chat(getCtx().transport, arg, page(values));
     }
+    case 'send':
+      return send(rest);
     default:
-      throw bad('Команды: categories, params, search, item, price, watch, track, login, logout, whoami, my, inbox, chat',
+      throw bad('Команды: categories, params, search, item, price, watch, track, login, logout, whoami, my, inbox, chat, send',
         { command: cmd ?? null });
   }
 }
@@ -310,17 +336,20 @@ const STATE_BLOCKED = {
     + 'без |, cd, перенаправлений и переменных перед ней; login --token-stdin при таком запрете выполняет сам пользователь',
 };
 
-const print = (obj) => process.stdout.write(`${JSON.stringify(obj, (k, v) => (k === 'seller_key' ? undefined : v), 2)}\n`);
+const print = (obj, done) => process.stdout.write(`${JSON.stringify(obj, (k, v) => (k === 'seller_key' ? undefined : v), 2)}\n`, done);
 
 if (process.argv[2] === 'login-worker') await loginWorker(process.argv.slice(3));
 
+// an open chat connection may keep the process alive for minutes, so send ends it once the answer is written
+const done = process.argv[2] === 'send' ? () => process.exit(process.exitCode ?? 0) : undefined;
+
 try {
-  print(await run(process.argv.slice(2)));
+  print(await run(process.argv.slice(2)), done);
 } catch (e) {
   let error;
   if (e instanceof KufarError) error = { code: e.code, message: hide(e.message), details: hide(e.details) };
   else if (e?.code === 'EPERM' || e?.code === 'EACCES') error = STATE_BLOCKED;
   else error = { code: 'INTERNAL', message: hide(String(e?.message ?? e)) };
-  print({ error });
   process.exitCode = 1;
+  print({ error }, done);
 }

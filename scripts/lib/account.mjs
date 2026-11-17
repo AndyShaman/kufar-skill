@@ -66,7 +66,7 @@ export function normalizeConversation(raw) {
     // a system conversation has an ad_info with empty strings
     ad: !info || !info.subject ? null : {
       id: String(info.id), title: info.subject, url: link(info.link), price_byn: money(info.price_byn),
-      status: info.status ?? null, mine: info.is_mine === true,
+      status: info.status ?? null,
     },
     with: raw.participant_info?.name || null,
     unread: Number(raw.unseen) || 0,
@@ -129,6 +129,14 @@ export async function inbox(transport, { limit = 30, offset = 0, unread = false 
   };
 }
 
+// who wrote the first message: known only when the page (newest first) reached the start of the conversation
+function startedBy(conversation, rawMessages, offset) {
+  if (!conversation || conversation.type === 'system' || conversation.type === 'system_with_ad') return null;
+  const total = conversation.messages_total;
+  if (typeof total !== 'number' || !rawMessages.length || offset + rawMessages.length < total) return null;
+  return rawMessages.at(-1).is_mine === true ? 'me' : 'them';
+}
+
 export async function chat(transport, id, { limit = 50, offset = 0 } = {}) {
   if (typeof id !== 'string' || !UUID_RE.test(id)) throw bad('Нужен номер диалога (id из inbox)');
   checkPage(limit, offset);
@@ -136,12 +144,23 @@ export async function chat(transport, id, { limit = 50, offset = 0 } = {}) {
   if (!Array.isArray(raw?.messages)) throw new KufarError('BAD_RESPONSE', 'В ответе Куфара нет списка сообщений');
   // Kufar answers newest first
   const messages = [...raw.messages].reverse().map(normalizeMessage);
+  const conversation = raw.conversation_info ? normalizeConversation(raw.conversation_info) : null;
   return {
     notice: NOTICE,
-    conversation: raw.conversation_info ? normalizeConversation(raw.conversation_info) : null,
+    conversation,
+    started_by: startedBy(conversation, raw.messages, offset),
     offset,
     has_more: raw.messages.length === limit,
     count: messages.length,
     messages,
   };
+}
+
+export async function sendTarget(transport, id) {
+  if (typeof id !== 'string' || !UUID_RE.test(id)) throw bad('Нужен номер диалога (id из inbox)');
+  const raw = await transport.getJson(`/messaging-api/v4/conversations/${id}/messages`, { limit: 1, offset: 0 });
+  if (!raw?.conversation_info) throw new KufarError('BAD_RESPONSE', 'В ответе Куфара нет данных диалога');
+  const c = normalizeConversation(raw.conversation_info);
+  if (c.blocked) throw new KufarError('CHAT_BLOCKED', 'Диалог заблокирован, написать в него нельзя');
+  return { conversation_id: id, to: c.with, ad: c.ad };
 }
