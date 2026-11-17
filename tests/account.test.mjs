@@ -726,3 +726,69 @@ test('normalizeMyAd: the existing keys are unchanged by can and refusal', () => 
   const { refusal: r2, can: _c2, ...rest2 } = normalizeMyAd(withMod({ ru: 'Причина' }, { ru: 'Подробности' }));
   assert.deepEqual(rest2, baseRest);
 });
+
+// ---- step 3g: newDialogTarget (the export does not exist yet: taken inside the tests) ----
+
+const newDialogTargetOf = async () => (await import('../scripts/lib/account.mjs')).newDialogTarget;
+const CHECK_PATH = '/messaging-api/v1/conversations/check/1000000001';
+const INFO_PATH = '/messaging-api/v3/conversations/info/1000000001';
+const AD_INFO = { id: 1000000001, subject: 'Катушка зажигания, новая', price_byn: '12345', currency: 'BYN', link: 'http://www.kufar.by/item/1000000001' };
+
+function adTransport({ check, info = { ad_info: AD_INFO, participant_info: { id: 7, name: 'Продавец Тест' } } } = {}) {
+  return fakeTransport((p) => {
+    if (p === CHECK_PATH) {
+      if (typeof check === 'function') return check();
+      return check ?? (() => { throw new KufarError('NOT_FOUND', 'нет диалога', { status: 404 }); })();
+    }
+    if (p === INFO_PATH) return structuredClone(info);
+    throw new Error(`unexpected path ${p}`);
+  });
+}
+
+test('newDialogTarget: check returns a conversation_id -> DIALOG_EXISTS with details, info is not requested', async () => {
+  const newDialogTarget = await newDialogTargetOf();
+  const t = adTransport({ check: { conversation_id: CONV_ID } });
+  await assert.rejects(newDialogTarget(t, '1000000001'), (e) => {
+    assert.equal(e.name, 'KufarError');
+    assert.equal(e.code, 'DIALOG_EXISTS');
+    assert.deepEqual(e.details, { conversation_id: CONV_ID });
+    return true;
+  });
+  assert.deepEqual(t.calls.map((c) => c.path), [CHECK_PATH]);
+});
+
+test('newDialogTarget: check NOT_FOUND -> info is requested, the result is ad and to', async () => {
+  const newDialogTarget = await newDialogTargetOf();
+  const t = adTransport();
+  const r = await newDialogTarget(t, '1000000001');
+  assert.deepEqual(t.calls.map((c) => c.path), [CHECK_PATH, INFO_PATH]);
+  assert.deepEqual(r, {
+    ad: { id: '1000000001', title: 'Катушка зажигания, новая', price_byn: 123.45, url: 'https://www.kufar.by/item/1000000001' },
+    to: 'Продавец Тест',
+  });
+  assert.deepEqual(Object.keys(r.ad), ['id', 'title', 'price_byn', 'url']);
+});
+
+test('newDialogTarget: missing optional values are null, the id is a string', async () => {
+  const newDialogTarget = await newDialogTargetOf();
+  const r = await newDialogTarget(adTransport({ info: { ad_info: { id: 5 } } }), '5');
+  assert.deepEqual(r, { ad: { id: '5', title: null, price_byn: null, url: null }, to: null });
+  const z = await newDialogTarget(adTransport({ info: { ad_info: { id: 5, price_byn: '0', link: '' }, participant_info: {} } }), '5');
+  assert.deepEqual(z, { ad: { id: '5', title: null, price_byn: null, url: null }, to: null });
+});
+
+test('newDialogTarget: ad_info that is not an object is BAD_RESPONSE', async () => {
+  const newDialogTarget = await newDialogTargetOf();
+  for (const info of [{}, { ad_info: null }, { ad_info: 'x' }, { ad_info: 5 }, { participant_info: { name: 'Т' } }]) {
+    await rejectsCode(newDialogTarget(adTransport({ info }), '1000000001'), 'BAD_RESPONSE');
+  }
+});
+
+test('newDialogTarget: another error from check is passed through, info is not requested', async () => {
+  const newDialogTarget = await newDialogTargetOf();
+  for (const code of ['AUTH_EXPIRED', 'NETWORK', 'RATE_LIMITED']) {
+    const t = adTransport({ check: () => { throw new KufarError(code, 'сбой'); } });
+    await rejectsCode(newDialogTarget(t, '1000000001'), code);
+    assert.deepEqual(t.calls.map((c) => c.path), [CHECK_PATH], code);
+  }
+});

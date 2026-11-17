@@ -575,3 +575,75 @@ test('submitAd: a record with another code does not block', async () => {
   assert.deepEqual(await submit(dir, f), { ad_id: '123', pending_slot: false });
   assert.equal(insertCalls(f).length, 1);
 });
+
+// ---- titleHints ----
+
+const hints = async (s) => (await import('../scripts/lib/post.mjs')).titleHints(s);
+
+test('titleHints: an ordinary title gives no hints', async () => {
+  for (const s of ['Диван угловой, ткань', 'Шины зимние 205/55 R16', 'Фильтр масляный 0 280 158 827', 'Стеллаж 4 ряда', 'Флешка 128 ГБ']) {
+    assert.deepEqual(await hints(s), [], s);
+  }
+});
+
+test('titleHints: selling_word at the start of the title', async () => {
+  for (const s of ['Продам iPhone 12', 'продаю велосипед', 'Продается диван', 'ПРОДАЁТСЯ гараж', 'Куплю шины', 'Срочно нужен диван', '   Продам стол', 'Продам: стол']) {
+    assert.deepEqual(await hints(s), ['selling_word'], s);
+  }
+});
+
+test('titleHints: selling_word is not given for a longer word or a word not at the start', async () => {
+  for (const s of ['Продамся', 'Срочное дело', 'Диван, продам', 'Продажа гаража', 'Куплютка']) {
+    assert.deepEqual(await hints(s), [], s);
+  }
+});
+
+test('titleHints: price in rubles, currencies and signs', async () => {
+  for (const s of ['Диван 100 руб', 'Диван 100р.', 'Диван 100 р', 'Диван 100руб.', 'Диван 5 рублей', 'Диван 5 рубля', 'Диван 100 BYN', 'Диван 50usd', 'Диван 50 EUR', 'Диван $50', 'Диван за €']) {
+    assert.deepEqual(await hints(s), ['price'], s);
+  }
+});
+
+test('titleHints: price is not given for words that only look like it', async () => {
+  for (const s of ['Стеллаж 4 ряда', 'Шины R16', 'Шины 205/55', 'Колесо 4 рубина', 'Телефон 5 euro', 'Деталь 12 рамка', 'Масло 5W-40 4 литра']) {
+    assert.deepEqual(await hints(s), [], s);
+  }
+});
+
+test('titleHints: contact in the title', async () => {
+  for (const s of ['Диван пишите a@b.example', 'Диван http://example.com', 'Диван https://example.com', 'Диван www.example.com',
+    'Диван +375 29 000-00-00', 'Диван +375(29)000-00-00', 'Диван 80290000000', 'Диван 80 29 000 00 00']) {
+    assert.ok((await hints(s)).includes('contact'), s);
+  }
+});
+
+test('titleHints: contact is not given for a part number or a short digit run', async () => {
+  for (const s of ['Форсунка 0 280 158 827', 'Фильтр 80 мм', 'Деталь 8029000000', 'Диск 375 мм', 'Шина 205/55 R16 91V']) {
+    assert.ok(!(await hints(s)).includes('contact'), s);
+  }
+});
+
+test('titleHints: glued number and memory unit', async () => {
+  for (const s of ['iPhone 128gb', 'Флешка 64гб', 'Диск 1ТБ', 'Диск 512Tb', 'Телефон 128GB чёрный']) {
+    assert.deepEqual(await hints(s), ['glued'], s);
+  }
+});
+
+test('titleHints: glued is not given for a spaced unit or a longer word', async () => {
+  for (const s of ['iPhone 128 ГБ', 'Диск 1 TB', 'Флешка 128gbit', 'Модель gb', 'Диск 2tbx']) {
+    assert.deepEqual(await hints(s), [], s);
+  }
+});
+
+test('titleHints: several hints come in the order of the contract, each once', async () => {
+  assert.deepEqual(await hints('Срочно 100 руб +375 29 000-00-00 128gb'), ['selling_word', 'price', 'contact', 'glued']);
+  assert.deepEqual(await hints('Продам 100 руб 200 руб $5'), ['selling_word', 'price']);
+  assert.deepEqual(await hints('Телефон 128gb +375 29 000-00-00'), ['contact', 'glued']);
+  assert.deepEqual(await hints('Куплю a@b.example 1ТБ 2ТБ'), ['selling_word', 'contact', 'glued']);
+});
+
+test('titleHints: a non-string gives an empty list', async () => {
+  for (const v of [undefined, null, 123, {}, ['Продам']]) {
+    assert.deepEqual(await hints(v), []);
+  }
+});

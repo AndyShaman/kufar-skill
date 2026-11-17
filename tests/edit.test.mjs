@@ -527,3 +527,75 @@ test('submitEdit: the errors of the PUT pass through', async () => {
   await rejectsCode(submit(submitFetch(() => jsonRes(500, {})), []), 'EDIT_UNCONFIRMED');
   await rejectsCode(submit(submitFetch(() => jsonRes(403, {})), []), 'EDIT_FAILED');
 });
+
+// ---- submitEdit: the record of the last sent edit ----
+// Seen live: while the moderator looks at an edit, Kufar gives the previous version back, so a new
+// preview shows the same changes and the same code. The record keeps the same edit from going twice.
+
+const HOUR = 60 * 60 * 1000;
+async function stateDir() {
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  return mkdtemp(join(tmpdir(), 'kufar-edit-'));
+}
+const submitS = async (dir, fetchImpl, over = {}) => (await edit()).submitEdit({
+  token: TOKEN, id: ID, ad: SUBMIT_AD, photos: [], fetchImpl, stateDir: dir, code: 'aaaaaaaaaaaa', now: () => 1000, ...over,
+});
+
+test('submitEdit: the same edit of the same listing within a day -> EDIT_PENDING, nothing is sent', async () => {
+  const dir = await stateDir();
+  assert.equal(await submitS(dir, submitFetch()), true);
+  const f = submitFetch();
+  let e;
+  await submitS(dir, f, { photos: [NEW1], now: () => 1000 + 23 * HOUR }).catch((x) => { e = x; });
+  assert.equal(e?.code, 'EDIT_PENDING');
+  assert.equal(e.details.at, 1000);
+  assert.equal(f.calls.length, 0);
+});
+
+test('submitEdit: another code, another listing or more than a day later -> sent again', async () => {
+  const dir = await stateDir();
+  await submitS(dir, submitFetch());
+  for (const over of [{ code: 'bbbbbbbbbbbb' }, { id: '1000000002', code: 'aaaaaaaaaaaa' }]) {
+    const f = submitFetch(() => jsonRes(200, {}));
+    assert.equal(await submitS(dir, f, over), true);
+    assert.equal(f.calls.length, 1);
+    await submitS(dir, submitFetch());
+  }
+  const f = submitFetch();
+  assert.equal(await submitS(dir, f, { now: () => 1000 + 25 * HOUR }), true);
+  assert.equal(f.calls.length, 1);
+});
+
+test('submitEdit: an edit Kufar refused is not remembered; an unconfirmed one is', async () => {
+  for (const [status, code] of [[422, 'EDIT_REFUSED'], [403, 'EDIT_FAILED']]) {
+    const dir = await stateDir();
+    await rejectsCode(submitS(dir, submitFetch(() => jsonRes(status, {}))), code);
+    assert.equal(await submitS(dir, submitFetch()), true);
+  }
+  const dir = await stateDir();
+  await rejectsCode(submitS(dir, submitFetch(() => jsonRes(500, {}))), 'EDIT_UNCONFIRMED');
+  const f = submitFetch();
+  await rejectsCode(submitS(dir, f), 'EDIT_PENDING');
+  assert.equal(f.calls.length, 0);
+});
+
+test('submitEdit: a failed photo upload leaves no record', async () => {
+  const dir = await stateDir();
+  await rejectsCode(submitS(dir, fakeFetch(() => jsonRes(500, {})), { photos: [NEW1] }), 'PHOTO_FAILED');
+  assert.equal(await submitS(dir, submitFetch()), true);
+});
+
+test('submitEdit: the record holds neither the key nor the text of the listing', async () => {
+  const dir = await stateDir();
+  await submitS(dir, submitFetch());
+  const { readdir, readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const names = await readdir(dir);
+  assert.deepEqual(names, ['edit-last.json']);
+  const text = await readFile(join(dir, names[0]), 'utf8');
+  assert.ok(!text.includes(TOKEN));
+  assert.ok(!text.includes(SUBMIT_AD.subject));
+  assert.deepEqual(Object.keys(JSON.parse(text)).sort(), ['at', 'code', 'id']);
+});

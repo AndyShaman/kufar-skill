@@ -480,3 +480,194 @@ test('hasKey: an empty string does not throw', async () => {
   const hasKey = await hasKeyOf();
   assert.equal(hasKey('', TOKEN), false);
 });
+
+// ---- step 3g: styleFlags and sendMessage with adId (imported inside the tests: not implemented yet) ----
+
+const styleFlagsOf = async () => (await import('../scripts/lib/chatsend.mjs')).styleFlags;
+
+test('styleFlags: an ordinary short chat text -> []', async () => {
+  const styleFlags = await styleFlagsOf();
+  assert.deepEqual(styleFlags('Добрый день, ещё продаёте? Торг возможен?'), []);
+  assert.deepEqual(styleFlags('Здравствуйте. Катушка ещё продаётся?\nМожно забрать завтра.'), []);
+});
+
+test('styleFlags: long_dash for an em dash and for an en dash, a hyphen is not it', async () => {
+  const styleFlags = await styleFlagsOf();
+  assert.deepEqual(styleFlags('Цена — договорная'), ['long_dash']);
+  assert.deepEqual(styleFlags('Цена – договорная'), ['long_dash']);
+  assert.deepEqual(styleFlags('Кто-то продаёт, что-нибудь есть'), []);
+});
+
+test('styleFlags: long above 300 characters, not at 300', async () => {
+  const styleFlags = await styleFlagsOf();
+  assert.deepEqual(styleFlags('а'.repeat(300)), []);
+  assert.deepEqual(styleFlags('а'.repeat(301)), ['long']);
+});
+
+test('styleFlags: exclaim for two exclamation marks, not for one', async () => {
+  const styleFlags = await styleFlagsOf();
+  assert.deepEqual(styleFlags('Здравствуйте! Ещё продаёте?'), []);
+  assert.deepEqual(styleFlags('Здравствуйте! Ещё продаёте!'), ['exclaim']);
+  assert.deepEqual(styleFlags('Здравствуйте!!'), ['exclaim']);
+});
+
+test('styleFlags: emoji', async () => {
+  const styleFlags = await styleFlagsOf();
+  assert.deepEqual(styleFlags('Добрый день 😀'), ['emoji']);
+  assert.deepEqual(styleFlags('Добрый день 👍 ещё продаёте'), ['emoji']);
+});
+
+test('styleFlags: list for a line starting with -, •, *, 1. or 2), also after spaces and on a second line', async () => {
+  const styleFlags = await styleFlagsOf();
+  for (const line of ['- цена', '• цена', '* цена', '1. цена', '2) цена', '   - цена', '\t• цена']) {
+    assert.deepEqual(styleFlags(line), ['list'], line);
+    assert.deepEqual(styleFlags(`Добрый день\n${line}`), ['list'], `second line: ${line}`);
+  }
+});
+
+test('styleFlags: a hyphen, a bullet or a number inside a line is not a list', async () => {
+  const styleFlags = await styleFlagsOf();
+  assert.deepEqual(styleFlags('Здравствуйте, кто-то - не вы - писал'), []);
+  assert.deepEqual(styleFlags('Ещё продаёте? Цена 2) или 3 тысячи'), []);
+  assert.deepEqual(styleFlags('Привет • пока'), []);
+});
+
+const FORMAL = [
+  'заинтересовал', 'подскажите, пожалуйста', 'буду признател', 'буду благодар', 'заранее благодар', 'заранее спасибо',
+  'с уважением', 'хотел бы уточнить', 'хотела бы уточнить', 'надеюсь на', 'доброго времени суток',
+];
+for (const phrase of FORMAL) {
+  test(`styleFlags: formal for "${phrase}", in any case`, async () => {
+    const styleFlags = await styleFlagsOf();
+    assert.deepEqual(styleFlags(`Здравствуйте. ${phrase}`), ['formal']);
+    assert.deepEqual(styleFlags(`Здравствуйте. ${phrase.toUpperCase()}`), ['formal']);
+    assert.deepEqual(styleFlags(`Здравствуйте. ${phrase[0].toUpperCase()}${phrase.slice(1)} вас`), ['formal']);
+  });
+}
+
+test('styleFlags: several flags come in the contract order, each once', async () => {
+  const styleFlags = await styleFlagsOf();
+  const all = `Заранее спасибо!! 😀 — ещё раз — !!\n- ${'а'.repeat(300)}`;
+  assert.deepEqual(styleFlags(all), ['long_dash', 'long', 'exclaim', 'emoji', 'list', 'formal']);
+  assert.deepEqual(styleFlags('С уважением!! — 😀 с уважением'), ['long_dash', 'exclaim', 'emoji', 'formal']);
+  assert.deepEqual(styleFlags('1. цена — 😀'), ['long_dash', 'emoji', 'list']);
+});
+
+const AD_ID = '1000000001';
+
+const startAd = (opts = {}) => start({ conversationId: undefined, adId: AD_ID, ...opts });
+async function openedAd(opts) {
+  const h = await startAd(opts);
+  h.ws.onopen();
+  await tick();
+  return { ...h, frame: JSON.parse(h.ws.sent[0]) };
+}
+const replyCreate = (frame, status, response, reqType = 'create_conversation') => JSON.stringify({
+  request_id: frame.request_id, req_type: reqType, status, ...(response === undefined ? {} : { response }),
+});
+
+test('sendMessage adId: after open one create_conversation frame goes out, all ids from uuid()', async () => {
+  const { ws, frame, uuid, s } = await openedAd();
+  assert.equal(ws.sent.length, 1);
+  assert.deepEqual(Object.keys(frame).sort(), ['payload', 'req_type', 'request_id']);
+  assert.equal(frame.req_type, 'create_conversation');
+  assert.equal(frame.payload.ad_id, 1000000001);
+  assert.equal(typeof frame.payload.ad_id, 'number');
+  assert.deepEqual(frame.payload.message, { client_message_id: frame.payload.message.client_message_id, text: 'Привет', type: 'text' });
+  const ids = [frame.payload.client_conversation_id, frame.payload.message.client_message_id, frame.request_id];
+  assert.equal(new Set(ids).size, 3);
+  for (const id of ids) assert.ok(uuid.calls.slice(1).includes(id), `${id} is not from uuid()`);
+  assert.ok(!('conversation_id' in frame.payload));
+  ws.onerror();
+  await s;
+});
+
+test('sendMessage adId: nothing is sent before open', async () => {
+  const { ws, s } = await startAd();
+  assert.deepEqual(ws.sent, []);
+  ws.onerror();
+  await s;
+});
+
+test('sendMessage adId: ack does not finish, success after it gives conversation_id, message_id and at', async () => {
+  const { ws, frame, s } = await openedAd();
+  ws.onmessage({ data: replyCreate(frame, 'ack') });
+  assert.equal(await stillPending(s), true);
+  ws.onmessage({ data: replyCreate(frame, 'success', { conversation_id: 'c-1', message_id: 'm-1', message_ts: '2026-11-17T15:43:55Z' }) });
+  assert.deepEqual((await s).value, { conversation_id: 'c-1', message_id: 'm-1', at: '2026-11-17T15:43:55Z' });
+});
+
+test('sendMessage adId: success with missing fields gives nulls, a number is kept', async () => {
+  for (const response of [{}, undefined, { conversation_id: 'c-2' }, { message_id: 7, message_ts: 1763394235 }]) {
+    const { ws, frame, s } = await openedAd();
+    ws.onmessage({ data: replyCreate(frame, 'success', response) });
+    assert.deepEqual((await s).value, {
+      conversation_id: response?.conversation_id ?? null, message_id: response?.message_id ?? null, at: response?.message_ts ?? null,
+    });
+  }
+});
+
+test('sendMessage adId: a value that is an object is null', async () => {
+  const { ws, frame, s } = await openedAd();
+  ws.onmessage({ data: replyCreate(frame, 'success', { conversation_id: { id: 'c' }, message_id: { id: 'm' }, message_ts: { t: 1 } }) });
+  assert.deepEqual((await s).value, { conversation_id: null, message_id: null, at: null });
+});
+
+test('sendMessage adId: success with another request_id or with req_type send_message is skipped', async () => {
+  const { ws, frame, s } = await openedAd();
+  ws.onmessage({ data: JSON.stringify({ request_id: 'other', req_type: 'create_conversation', status: 'success', response: { conversation_id: 'bad' } }) });
+  ws.onmessage({ data: replyCreate(frame, 'success', { message_id: 'bad' }, 'send_message') });
+  ws.onmessage({ data: replyCreate(frame, 'error', { code: 'x' }, 'send_message') });
+  assert.equal(await stillPending(s), true);
+  ws.onmessage({ data: replyCreate(frame, 'success', { conversation_id: 'good' }) });
+  assert.equal((await s).value.conversation_id, 'good');
+});
+
+test('sendMessage adId: an error frame is SEND_FAILED with details.code', async () => {
+  const { ws, frame, s } = await openedAd();
+  ws.onmessage({ data: replyCreate(frame, 'error', { code: 'rate_limited' }) });
+  const { error } = await s;
+  assert.equal(error.code, 'SEND_FAILED');
+  assert.deepEqual(error.details, { code: 'rate_limited' });
+  NO_KEY(error);
+});
+
+test('sendMessage adId: error or close before the frame was sent is NETWORK, after it SEND_UNCONFIRMED', async () => {
+  for (const event of ['onerror', 'onclose']) {
+    const a = await startAd();
+    a.ws[event](new Error(`boom ${a.ws.url}`));
+    const ea = (await a.s).error;
+    assert.equal(ea.code, 'NETWORK', event);
+    assert.deepEqual(a.ws.sent, []);
+    NO_KEY(ea);
+    const b = await openedAd();
+    b.ws[event](new Error(`boom ${b.ws.url}`));
+    const eb = (await b.s).error;
+    assert.equal(eb.code, 'SEND_UNCONFIRMED', event);
+    NO_KEY(eb);
+  }
+});
+
+test('sendMessage adId: no answer in timeoutMs is SEND_UNCONFIRMED after the frame, TIMEOUT before it', async () => {
+  const a = await openedAd({ timeoutMs: 40 });
+  assert.equal((await a.s).error.code, 'SEND_UNCONFIRMED');
+  const b = await startAd({ timeoutMs: 40 });
+  assert.equal((await b.s).error.code, 'TIMEOUT');
+});
+
+test('sendMessage: both conversationId and adId, or neither, is BAD_ARGS and no socket is opened', async () => {
+  for (const ids of [{ conversationId: CONV_ID, adId: AD_ID }, { conversationId: undefined, adId: undefined }]) {
+    const { FakeWS, instances } = makeWS();
+    await rejectsCode(sendMessage({ token: TOKEN, text: 'Привет', WebSocketImpl: FakeWS, uuid: fakeUuid(), timeoutMs: 200, ...ids }), 'BAD_ARGS');
+    assert.equal(instances.length, 0);
+  }
+});
+
+test('sendMessage: with conversationId the frame is still send_message', async () => {
+  const { ws, frame, s } = await opened();
+  assert.equal(frame.req_type, 'send_message');
+  assert.equal(frame.payload.conversation_id, CONV_ID);
+  assert.ok(!('ad_id' in frame.payload));
+  ws.onerror();
+  await s;
+});

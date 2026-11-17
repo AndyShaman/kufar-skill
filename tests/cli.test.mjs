@@ -1010,3 +1010,42 @@ test('unknown command message names manage', async () => {
   assert.equal(r.json.error.code, 'BAD_ARGS');
   assert.match(r.json.error.message, /\bmanage\b/);
 });
+
+// ---- step 3g: send --ad, only the cases that end before the first request ----
+
+const AD_SEND_BAD_ARGS = [
+  [['send', UUID, '--ad', '1000000001', '--text', 'Привет'], 'both a dialog id and --ad'],
+  [['send', '--text', 'Привет'], 'neither a dialog id nor --ad'],
+  [['send', '--ad', 'abc', '--text', 'Привет'], '--ad is not digits'],
+  [['send', '--ad', '10000x', '--text', 'Привет'], '--ad with a letter'],
+  [['send', '--ad', '1000000001'], '--ad without --text'],
+];
+for (const [args, why] of AD_SEND_BAD_ARGS) {
+  test(`kufar send: ${why} -> BAD_ARGS, exit code 1, also with a saved key, the key is not in the output`, async () => {
+    const r = await run(args);
+    assert.equal(r.status, 1);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    const { dir, token } = await idleDir({ idleDays: 0 });
+    const k = runIn(dir, args);
+    assert.equal(k.status, 1);
+    assert.equal(k.json?.error?.code, 'BAD_ARGS', k.stdout);
+    assert.ok(!k.stdout.includes(token), 'the key is in the output');
+  });
+}
+
+test('kufar send --ad without login -> AUTH_REQUIRED, exit code 1, the same as send with a dialog id', async () => {
+  const r = await run(['send', '--ad', '1000000001', '--text', 'Привет']);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'AUTH_REQUIRED', r.stdout);
+  const d = await run(['send', UUID, '--text', 'Привет']);
+  assert.equal(r.json.error.message, d.json.error.message);
+});
+
+test('kufar send --ad with a saved key and a text that holds the key -> TEXT_HAS_KEY, the key and the text are not in the output', async () => {
+  const { dir, token } = await idleDir({ idleDays: 0 });
+  const r = runIn(dir, ['send', '--ad', '1000000001', '--text', `вот мой ключ: ${token}`]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'TEXT_HAS_KEY', r.stdout);
+  assert.ok(!r.stdout.includes(token), 'the key is in the output');
+  assert.ok(!r.stdout.includes('вот мой ключ'), 'the text is in the output');
+});

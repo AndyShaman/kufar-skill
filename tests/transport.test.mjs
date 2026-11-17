@@ -434,3 +434,40 @@ test('a load path with non-digits is rejected before fetch and before getToken',
     assert.equal(tokenCalls.length, 0, p);
   }
 });
+
+// ---- step 3g: the paths of the first message ----
+
+const AD_LOGIN_PATHS = ['/messaging-api/v1/conversations/check/1000000001', '/messaging-api/v3/conversations/info/1000000001'];
+
+test('step 3g: the check and info paths with digits are allowed under login', async () => {
+  for (const p of AD_LOGIN_PATHS) {
+    const { transport, fetches } = await setupAuth();
+    await transport.getJson(p);
+    assert.equal(fetches.length, 1, p);
+    assert.equal(new URL(fetches[0].url).origin, 'https://api.kufar.by');
+    assert.equal(new URL(fetches[0].url).pathname, p);
+    assert.equal(authHeader(fetches[0].init), `Bearer ${KEY}`, p);
+  }
+});
+
+test('step 3g: the check and info paths with a bad tail are rejected before fetch and before getToken', async () => {
+  const bad = [];
+  for (const base of ['/messaging-api/v1/conversations/check', '/messaging-api/v3/conversations/info']) {
+    bad.push(`${base}/`, `${base}/abc`, `${base}/100000000x`, `${base}/${UUID}`, `${base}/1000000001/extra`, `${base}/1000000001/`, `${base}/-1`);
+  }
+  bad.push('/messaging-api/v2/conversations/check/1000000001', '/messaging-api/v1/conversations/info/1000000001', '/messaging-api/v3/conversations/check/1000000001');
+  for (const p of bad) {
+    const { transport, fetches, tokenCalls } = await setupAuth();
+    await rejectsCode(transport.getJson(p), 'PATH_NOT_ALLOWED');
+    assert.equal(fetches.length, 0, p);
+    assert.equal(tokenCalls.length, 0, p);
+  }
+});
+
+test('step 3g: the check and info paths without getToken are AUTH_REQUIRED and make no network call', async () => {
+  for (const p of AD_LOGIN_PATHS) {
+    const { transport, fetches } = await setupAuth({ getToken: null });
+    await rejectsCode(transport.getJson(p), 'AUTH_REQUIRED');
+    assert.equal(fetches.length, 0, p);
+  }
+});
