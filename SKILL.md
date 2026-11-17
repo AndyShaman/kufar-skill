@@ -6,7 +6,7 @@ description: >-
   со статистикой, разбор входящих и ответ в чате после согласия пользователя. Use when asked «найди на Куфаре», «сколько стоит
   на Куфаре», «за сколько продать», «дёшево ли это», «проверь объявление», «не развод ли это»,
   «следи за объявлениями», «что с моими объявлениями на Куфаре», «что мне написали на Куфаре»,
-  «разбери входящие на Куфаре», «ответь покупателю», or when given a kufar.by link. Not for
+  «разбери входящие на Куфаре», «ответь покупателю», «составь объявление для Куфара», or when given a kufar.by link. Not for
   publishing listings, payments or other marketplaces.
 license: MIT
 compatibility: Requires Node.js 22+ and outbound HTTPS to api.kufar.by (plus cre-auth.kufar.by for login and logout, messaging-ws.kufar.by for chat replies). Works with any agent that can run shell commands. An account is needed only for the own-account commands. No MCP server, no dependencies.
@@ -32,6 +32,7 @@ node <папка скилла>/scripts/kufar.mjs <команда> [опции]
 | «Сколько стоит», «дёшево ли это», «за сколько продать» | [Цена](references/pricing.md) |
 | «Не развод ли это»: объявление или присланное сообщение | [Безопасность](references/safety.md) |
 | Свои объявления и их статистика, вход в аккаунт, команды переписки | [Свой аккаунт](references/account.md) |
+| Подготовить объявление к подаче: рубрика, название, описание, фото, проверка на причины отказа | [Продавцу](references/seller.md) |
 | Разобрать входящие, ответить покупателю или продавцу, поторговаться | [Переписка](references/inbox.md) |
 | Что сказать после первого входа, как закрыть агенту доступ к ключу | [Защита ключа](references/key-protection.md) |
 
