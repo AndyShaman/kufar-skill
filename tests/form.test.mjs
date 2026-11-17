@@ -373,3 +373,38 @@ test('findFormValues: a value in a list longer than 40 is found from the full fi
   const fields = resolveForm(boot({ refs: { 1: f('big', { values: many(60) }) } }), V, { full: true });
   assert.deepStrictEqual(findFormValues(fields, 'V55'), [{ name: 'big', label: 'L-big', value: '55', text: 'V55' }]);
 });
+
+// ---- step 3d: typeField (imported inside the tests: the export does not exist yet) ----
+
+const typeFieldOf = async () => (await import('../scripts/lib/form.mjs')).typeField;
+
+test('typeField: returns name and url_name of the active description with is_type', async () => {
+  const typeField = await typeFieldOf();
+  const b = boot({ refs: { 1: f('a'), 2: f('kind', { is_type: true, url_name: 'knd' }) } });
+  assert.deepEqual(typeField(b, V), { name: 'kind', url_name: 'knd' });
+});
+
+test('typeField: no active description with is_type -> null', async () => {
+  const typeField = await typeFieldOf();
+  const b = boot({ refs: { 1: f('a'), 2: f('b') } });
+  assert.equal(typeField(b, V), null);
+});
+
+test('typeField: a description with is_type whose rule is not satisfied does not count', async () => {
+  const typeField = await typeFieldOf();
+  const b = boot({
+    refs: { 1: f('a'), 2: f('kind', { is_type: true, url_name: 'knd' }) },
+    rules: [{ rule: {}, refs: ['1'] }, { rule: { region: '7' }, refs: ['2'] }],
+  });
+  assert.equal(typeField(b, V), null);
+  assert.deepEqual(typeField(b, { ...V, region: '7' }), { name: 'kind', url_name: 'knd' });
+});
+
+test('typeField: of several active descriptions the first in parameters_order wins', async () => {
+  const typeField = await typeFieldOf();
+  const b = boot({
+    refs: { 1: f('first', { is_type: true, url_name: 'one' }), 2: f('second', { is_type: true, url_name: 'two' }) },
+    order: { main: ['2', '1'] },
+  });
+  assert.deepEqual(typeField(b, V), { name: 'second', url_name: 'two' });
+});

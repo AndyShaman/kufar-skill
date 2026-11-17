@@ -434,3 +434,49 @@ test('sendMessage: the key and the address are in no error message or details', 
     assert.ok(!shown.includes(TOKEN) && !shown.includes('messaging-ws'), shown);
   }
 });
+
+// ---- step 3d: hasKey (imported inside the tests: the export does not exist yet) ----
+
+const hasKeyOf = async () => (await import('../scripts/lib/chatsend.mjs')).hasKey;
+
+test('hasKey: a key-shaped string -> true', async () => {
+  const hasKey = await hasKeyOf();
+  assert.equal(hasKey(`вот ${SHAPED} тут`, TOKEN), true);
+  assert.equal(hasKey(SHAPED, undefined), true);
+});
+
+test('hasKey: the saved key itself -> true', async () => {
+  const hasKey = await hasKeyOf();
+  assert.equal(hasKey(`ключ ${TOKEN}`, TOKEN), true);
+});
+
+test('hasKey: the second or the third part of 20+ characters -> true', async () => {
+  const hasKey = await hasKeyOf();
+  assert.equal(hasKey(`код ${P2}`, TOKEN), true);
+  assert.equal(hasKey(`код ${P3}`, TOKEN), true);
+});
+
+test('hasKey: the key split by spaces -> true', async () => {
+  const hasKey = await hasKeyOf();
+  assert.equal(hasKey(TOKEN.match(/.{1,6}/g).join(' '), TOKEN), true);
+});
+
+test('hasKey: ordinary text -> false', async () => {
+  const hasKey = await hasKeyOf();
+  assert.equal(hasKey('Катушка зажигания, новая, торг уместен', TOKEN), false);
+});
+
+test('hasKey: a short part of the key -> false', async () => {
+  const hasKey = await hasKeyOf();
+  assert.equal(hasKey('Zq8Lm2Xv5Rt9', TOKEN), false);
+});
+
+test('hasKey: token undefined and ordinary text -> false', async () => {
+  const hasKey = await hasKeyOf();
+  assert.equal(hasKey('Катушка зажигания', undefined), false);
+});
+
+test('hasKey: an empty string does not throw', async () => {
+  const hasKey = await hasKeyOf();
+  assert.equal(hasKey('', TOKEN), false);
+});

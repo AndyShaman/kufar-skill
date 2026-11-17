@@ -782,3 +782,76 @@ test('unknown command message names form', async () => {
   assert.equal(r.json.error.code, 'BAD_ARGS');
   assert.match(r.json.error.message, /\bform\b/);
 });
+
+// ---- step 3d: post, only the cases that end before the first request ----
+
+const writeDraft = async (content) => {
+  const f = path.join(await tmpDir(), 'draft.json');
+  await fs.writeFile(f, typeof content === 'string' ? content : JSON.stringify(content));
+  return f;
+};
+const GOOD_DRAFT = { category: '2040', subject: 'Катушка зажигания', body: 'Новая, в упаковке', price: 59 };
+
+test('kufar post without --draft -> BAD_ARGS, exit code 1', async () => {
+  const r = await run(['post']);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+  assert.notEqual(r.json.error.details?.command, 'post', `post is an unknown command: ${r.stdout}`);
+});
+
+for (const [confirm, why] of [['abc', 'too short'], ['0123456789abc', 'too long'], ['0123456789AB', 'in upper case'], ['0123456789gh', 'with non-hex characters']]) {
+  test(`kufar post: --confirm ${why} -> BAD_ARGS, exit code 1`, async () => {
+    const draft = await writeDraft(GOOD_DRAFT);
+    const r = await run(['post', '--draft', draft, '--confirm', confirm]);
+    assert.equal(r.status, 1);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    assert.notEqual(r.json.error.details?.command, 'post', `post is an unknown command: ${r.stdout}`);
+  });
+}
+
+test('kufar post: a draft file that does not exist -> BAD_ARGS', async () => {
+  const r = await run(['post', '--draft', path.join(await tmpDir(), 'nope.json')]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+  assert.notEqual(r.json.error.details?.command, 'post', `post is an unknown command: ${r.stdout}`);
+});
+
+test('kufar post: a draft that is not JSON -> BAD_ARGS, the file text is not in the output', async () => {
+  const r = await run(['post', '--draft', await writeDraft('not json FILE-MARK')]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+  assert.notEqual(r.json.error.details?.command, 'post', `post is an unknown command: ${r.stdout}`);
+  assert.ok(!r.stdout.includes('FILE-MARK'));
+});
+
+test('kufar post: a draft that is a JSON array -> BAD_ARGS', async () => {
+  const r = await run(['post', '--draft', await writeDraft('[1, 2]')]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+  assert.notEqual(r.json.error.details?.command, 'post', `post is an unknown command: ${r.stdout}`);
+});
+
+test('kufar post: a draft without category -> DRAFT_INVALID', async () => {
+  const { category, ...rest } = GOOD_DRAFT;
+  const r = await run(['post', '--draft', await writeDraft(rest)]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'DRAFT_INVALID', r.stdout);
+});
+
+test('kufar post: category "abc" -> DRAFT_INVALID', async () => {
+  const r = await run(['post', '--draft', await writeDraft({ ...GOOD_DRAFT, category: 'abc' })]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'DRAFT_INVALID', r.stdout);
+});
+
+test('kufar post: a valid-looking draft without a saved key -> AUTH_REQUIRED', async () => {
+  const r = await run(['post', '--draft', await writeDraft(GOOD_DRAFT)]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'AUTH_REQUIRED', r.stdout);
+});
+
+test('unknown command message names post', async () => {
+  const r = await run(['bogus']);
+  assert.equal(r.json.error.code, 'BAD_ARGS');
+  assert.match(r.json.error.message, /\bpost\b/);
+});
