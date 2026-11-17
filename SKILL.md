@@ -36,7 +36,7 @@ node <папка скилла>/scripts/kufar.mjs <команда> [опции]
 | Разобрать входящие, ответить покупателю или продавцу, поторговаться | [Переписка](references/inbox.md) |
 | Что сказать после первого входа, как закрыть агенту доступ к ключу | [Защита ключа](references/key-protection.md) |
 
-Команды: `categories`, `params`, `search`, `item`, `price`, `watch add|check|list|remove`, `track add|check|list|remove`, `login`, `logout`, `whoami`, `my`, `inbox`, `chat`, `send`.
+Команды: `categories`, `params`, `search`, `item`, `price`, `form`, `watch add|check|list|remove`, `track add|check|list|remove`, `login`, `logout`, `whoami`, `my`, `inbox`, `chat`, `send`.
 
 ## Границы
 
