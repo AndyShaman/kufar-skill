@@ -82,6 +82,9 @@ export const NOW = Date.parse('2026-11-17T12:00:00Z');
 export const DAY = 86_400_000;
 export const daysAgo = (n, now = NOW) => new Date(now - n * DAY).toISOString();
 
+// shared id clock: an ad numbered 2000000 - 1000 * n is n days old at NOW (ids of the other fixtures are far above it, so they stay new)
+export const CLOCK = { id: 2000000, ms: NOW, per_day: 1000 };
+
 export const rawAd = (over = {}) => ({ ...structuredClone(RAW_AD), ...over });
 
 // raw ad with a phones_model parameter; price in BYN (null = no price)

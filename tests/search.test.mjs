@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildSearchQuery, search, flagAds, ageDays, STALE_DAYS,
+  buildSearchQuery, search, flagAds, ageDays, STALE_DAYS, BUMP_GAP_DAYS,
 } from '../scripts/lib/search.mjs';
 import {
-  rejectsCode, throwsCode, plain, mkAd, rawAd, fakeTransport, SEARCH_PATH, NOW, DAY, daysAgo,
+  rejectsCode, throwsCode, plain, mkAd, rawAd, fakeTransport, SEARCH_PATH, NOW, DAY, daysAgo, CLOCK,
 } from './helpers.mjs';
 
 const base = { lang: 'ru', sort: 'lst.d', size: '30' };
@@ -26,6 +26,7 @@ test('sort values', () => {
   assert.equal(q({ cat: '1', sort: 'cheap' }).sort, 'prc.a');
   assert.equal(q({ cat: '1', sort: 'expensive' }).sort, 'prc.d');
   assert.equal(q({ cat: '1', sort: 'new' }).sort, 'lst.d');
+  assert.equal(q({ cat: '1', sort: 'old' }).sort, 'lst.a');
   throwsCode(() => buildSearchQuery({ cat: '1', sort: 'random' }), 'BAD_ARGS');
 });
 
@@ -228,5 +229,86 @@ test('search passes now to the flags', async () => {
   assert.deepEqual(a.flags, ['stale']);
   const b = (await search(tr, { cat: '1' }, { now: () => NOW - 35 * DAY })).ads[0];
   assert.equal(b.days, 5);
+  assert.deepEqual(b.flags, []);
+});
+
+test('BUMP_GAP_DAYS is 7', () => {
+  assert.equal(BUMP_GAP_DAYS, 7);
+});
+
+// 1960000 is 40 days old by CLOCK, 1980000 is 20, 1942000 is 58
+test('flagAds with a clock: every ad gets age_days', () => {
+  const r = flagAds([
+    mkAd(1960000, 100, { listed_at: daysAgo(40) }),
+    mkAd(1980000, 100, { listed_at: daysAgo(0) }),
+    mkAd(1000000001, 100, { listed_at: daysAgo(3) }),
+  ], NOW, CLOCK);
+  assert.deepEqual(r.map((a) => a.age_days), [40, 20, 3]);
+  assert.deepEqual(r.map((a) => a.days), [40, 0, 3]);
+});
+
+test('flagAds with a clock: private ad bumped today with an old id is stale and bumped, after the other flags', () => {
+  const [a] = flagAds([mkAd(1960000, null, { type: 'buy', title: 'Куплю запчасти', listed_at: daysAgo(0) })], NOW, CLOCK);
+  assert.equal(a.days, 0);
+  assert.equal(a.age_days, 40);
+  assert.deepEqual(a.flags, ['no_price', 'not_sell', 'suspect_title', 'stale', 'bumped']);
+  const [b] = flagAds([mkAd(1960000, 100, { listed_at: daysAgo(0) })], NOW, CLOCK);
+  assert.deepEqual(b.flags, ['stale', 'bumped']);
+});
+
+test('flagAds with a clock: a company ad is never stale or bumped, age_days is still computed', () => {
+  const [a] = flagAds([mkAd(1960000, 100, { company: true, listed_at: daysAgo(0) })], NOW, CLOCK);
+  assert.equal(a.age_days, 40);
+  assert.deepEqual(a.flags, []);
+});
+
+test('flagAds: company ad without a clock is not stale either', () => {
+  const [a] = flagAds([mkAd(1, 100, { company: true, listed_at: daysAgo(40) })], NOW);
+  assert.equal(a.days, 40);
+  assert.deepEqual(a.flags, []);
+});
+
+test('flagAds: bumped without stale (age 20, days 2)', () => {
+  const [a] = flagAds([mkAd(1980000, 100, { listed_at: daysAgo(2) })], NOW, CLOCK);
+  assert.equal(a.age_days, 20);
+  assert.deepEqual(a.flags, ['bumped']);
+});
+
+test('flagAds: no bumped when days >= 7 (age 58, days 50)', () => {
+  const [a] = flagAds([mkAd(1942000, 100, { listed_at: daysAgo(50) })], NOW, CLOCK);
+  assert.equal(a.age_days, 58);
+  assert.deepEqual(a.flags, ['stale']);
+});
+
+test('flagAds: bumped edges, gap 7 yes and 6 no, days 6 yes', () => {
+  const yes = flagAds([mkAd(1980000, 100, { listed_at: daysAgo(6) })], NOW, CLOCK)[0]; // age 20, days 6: gap 14
+  assert.deepEqual(yes.flags, ['bumped']);
+  const gap7 = flagAds([mkAd(1990000, 100, { listed_at: daysAgo(3) })], NOW, CLOCK)[0]; // age 10, days 3: gap 7
+  assert.deepEqual(gap7.flags, ['bumped']);
+  const gap6 = flagAds([mkAd(1991000, 100, { listed_at: daysAgo(3) })], NOW, CLOCK)[0]; // age 9, days 3: gap 6
+  assert.deepEqual(gap6.flags, []);
+});
+
+test('flagAds: no bumped when age_days - days < 7', () => {
+  const [a] = flagAds([mkAd(1000000001, 100, { listed_at: daysAgo(2) })], NOW, CLOCK);
+  assert.equal(a.age_days, 2);
+  assert.deepEqual(a.flags, []);
+});
+
+test('flagAds without a clock: age_days equals days', () => {
+  const r = flagAds([mkAd(1960000, 100, { listed_at: daysAgo(40) }), mkAd(2, 100, { listed_at: null })], NOW);
+  assert.deepEqual(r.map((a) => a.age_days), [40, null]);
+  assert.deepEqual(r.map((a) => a.days), [40, null]);
+  assert.deepEqual(flagAds([mkAd(1960000, 100, { listed_at: daysAgo(0) })], NOW, null)[0].flags, []);
+});
+
+test('search passes clock to the flags', async () => {
+  const tr = fakeTransport(() => ({ ads: [rawAd({ ad_id: 1960000, list_time: daysAgo(0) })] }));
+  const a = (await search(tr, { cat: '1' }, { now: () => NOW, clock: CLOCK })).ads[0];
+  assert.equal(a.days, 0);
+  assert.equal(a.age_days, 40);
+  assert.deepEqual(a.flags, ['stale', 'bumped']);
+  const b = (await search(tr, { cat: '1' }, { now: () => NOW })).ads[0];
+  assert.equal(b.age_days, 0);
   assert.deepEqual(b.flags, []);
 });

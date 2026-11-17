@@ -8,7 +8,7 @@ import {
   trackAdd, trackCheck, trackList, trackRemove,
 } from '../scripts/lib/watch.mjs';
 import {
-  tmpDir, rejectsCode, rawAdOf, series, fakeTransport, itemIdOf, pageOf, SEARCH_PATH, NOW, daysAgo,
+  tmpDir, rejectsCode, rawAdOf, series, fakeTransport, itemIdOf, pageOf, SEARCH_PATH, NOW, daysAgo, CLOCK,
 } from './helpers.mjs';
 
 const readFile = async (dir, name) => JSON.parse(await fs.readFile(path.join(dir, name), 'utf8'));
@@ -136,6 +136,20 @@ test('watchCheck passes ctx.now: new ads carry days and stale', async () => {
   assert.deepEqual(byId['1000000002'].flags, []);
   assert.equal(byId['1000000003'].days, 40);
   assert.deepEqual(byId['1000000003'].flags, ['stale']);
+});
+
+test('watchCheck passes ctx.clock: a new ad bumped today with an old id is stale and bumped', async () => {
+  const { ctx, state } = await ctxWith(series(1000000001, [500]));
+  await watchAdd(ctx, 'w', { cat: '17010' });
+  state.ads = [
+    rawAdOf({ id: 1000000001, price: 500 }),
+    rawAdOf({ id: 1960000, price: 700, listTime: daysAgo(0) }),
+  ];
+  const r = await watchCheck({ ...ctx, clock: CLOCK }, 'w');
+  assert.equal(r.new.length, 1);
+  assert.equal(r.new[0].days, 0);
+  assert.equal(r.new[0].age_days, 40);
+  assert.deepEqual(r.new[0].flags, ['stale', 'bumped']);
 });
 
 test('watchCheck unknown name', async () => {
