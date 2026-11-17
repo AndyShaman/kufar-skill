@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compareAds, compare } from '../scripts/lib/compare.mjs';
+import { compareAds, compare, pickBest, compareBest } from '../scripts/lib/compare.mjs';
 import { normalizeAd } from '../scripts/lib/ads.mjs';
 import { KufarError } from '../scripts/lib/errors.mjs';
-import { mkAd, rawAdOf, fakeTransport, itemIdOf, rejectsCode } from './helpers.mjs';
+import { mkAd, rawAdOf, fakeTransport, itemIdOf, rejectsCode, pageOf, SEARCH_PATH, NOW, CLOCK } from './helpers.mjs';
 
 const P = (value, text, label = null) => ({ label, value, text, filter: null });
 const card = (id, params, over = {}) => mkAd(id, 100, { category: '17010', params, ...over });
@@ -166,4 +166,178 @@ test('compare: both of two missing -> NOT_FOUND', async () => {
 
 test('compare: another error is thrown as it is', async () => {
   await rejectsCode(compare(market([], IDS[1]), IDS), 'RATE_LIMITED');
+});
+
+// ---- pickBest ----
+
+// an estimate in the shape estimatePrice returns; each comparable is [price] or [price, 'stale']
+function estimateOf(median, rows, level = 'good', total = rows.length) {
+  return {
+    stats: { all: {}, private: {}, company: {}, median },
+    reliability: { level, reasons: [] },
+    total_on_site: total,
+    comparables: rows.map(([price, stale], i) => ({
+      id: `${2000000001 + i}`, title: `Товар ${i}`, price_byn: price, company: false, listed_at: '2026-11-15T12:00:00.000Z',
+      days: stale ? 100 : 2, age_days: stale ? 100 : 2, stale: stale === 'stale', bumped: false, url: `https://www.kufar.by/item/${2000000001 + i}`,
+    })),
+  };
+}
+const idAt = (i) => `${2000000001 + i}`;
+
+test('pickBest: a price of half the median or less is too cheap, the cheapest top of the rest are picked with their distance from the median', () => {
+  const r = pickBest(estimateOf(400, [[150], [200], [250], [300], [380], [420]]), 3);
+  assert.equal(r.median, 400);
+  assert.deepEqual(r.skipped.too_cheap.map((x) => x.id), [idAt(0), idAt(1)]);
+  assert.deepEqual(r.picked, [
+    { id: idAt(2), price_byn: 250, vs_median_pct: -38, stale: false },
+    { id: idAt(3), price_byn: 300, vs_median_pct: -25, stale: false },
+    { id: idAt(4), price_byn: 380, vs_median_pct: -5, stale: false },
+  ]);
+  assert.equal(r.skipped.other, 1);
+  assert.equal(r.skipped.stale, 0);
+});
+
+test('pickBest: too_cheap entries carry id, price_byn and url only', () => {
+  const r = pickBest(estimateOf(400, [[150], [300], [350], [380]]), 3);
+  assert.deepEqual(r.skipped.too_cheap, [{ id: idAt(0), price_byn: 150, url: `https://www.kufar.by/item/${idAt(0)}` }]);
+});
+
+test('pickBest: the result has exactly median, picked, skipped', () => {
+  const r = pickBest(estimateOf(400, [[300], [350]]), 3);
+  assert.deepEqual(Object.keys(r).sort(), ['median', 'picked', 'skipped']);
+  assert.deepEqual(Object.keys(r.skipped).sort(), ['other', 'stale', 'too_cheap']);
+});
+
+test('pickBest: not stale listings come first, the cheapest stale ones fill the rest', () => {
+  const r = pickBest(estimateOf(400, [[250, 'stale'], [260, 'stale'], [300], [380], [390, 'stale']]), 3);
+  assert.deepEqual(r.picked.map((x) => x.id), [idAt(2), idAt(3), idAt(0)]);
+  assert.deepEqual(r.picked.map((x) => x.stale), [false, false, true]);
+  assert.equal(r.skipped.stale, 2);
+  assert.equal(r.skipped.other, 0);
+});
+
+test('pickBest: a stale listing is not picked while enough not stale ones exist', () => {
+  const r = pickBest(estimateOf(400, [[250, 'stale'], [300], [320], [340], [360]]), 3);
+  assert.deepEqual(r.picked.map((x) => x.id), [idAt(1), idAt(2), idAt(3)]);
+  assert.equal(r.skipped.stale, 1);
+  assert.equal(r.skipped.other, 1);
+});
+
+test('pickBest: a too cheap listing is not counted as stale or other even when it is stale', () => {
+  const r = pickBest(estimateOf(400, [[100, 'stale'], [300], [320]]), 3);
+  assert.deepEqual(r.skipped.too_cheap.map((x) => x.id), [idAt(0)]);
+  assert.equal(r.skipped.stale, 0);
+  assert.equal(r.skipped.other, 0);
+});
+
+test('pickBest: insufficient reliability gives no median, no too cheap, null distances, the cheapest top picked', () => {
+  const r = pickBest(estimateOf(400, [[100], [200, 'stale'], [300], [350], [380]], 'insufficient'), 3);
+  assert.equal(r.median, null);
+  assert.deepEqual(r.skipped.too_cheap, []);
+  assert.deepEqual(r.picked.map((x) => x.id), [idAt(0), idAt(2), idAt(3)]);
+  assert.ok(r.picked.every((x) => x.vs_median_pct === null));
+  assert.equal(r.skipped.stale, 1);
+  assert.equal(r.skipped.other, 1);
+});
+
+test('pickBest: top is 3 by default', () => {
+  const r = pickBest(estimateOf(400, [[300], [310], [320], [330], [340]]));
+  assert.equal(r.picked.length, 3);
+});
+
+test('pickBest: top 2 and top 5 are honoured', () => {
+  const e = estimateOf(400, [[300], [310], [320], [330], [340], [350]]);
+  assert.deepEqual(pickBest(e, 2).picked.map((x) => x.id), [idAt(0), idAt(1)]);
+  assert.equal(pickBest(e, 5).picked.length, 5);
+  assert.equal(pickBest(e, 5).skipped.other, 1);
+});
+
+test('pickBest: fewer candidates than top are all picked', () => {
+  const r = pickBest(estimateOf(400, [[300], [350]]), 5);
+  assert.deepEqual(r.picked.map((x) => x.id), [idAt(0), idAt(1)]);
+  assert.equal(r.skipped.other, 0);
+});
+
+test('pickBest: the estimate is not changed', () => {
+  const e = estimateOf(400, [[150], [300, 'stale'], [350]]);
+  const before = structuredClone(e);
+  pickBest(e, 3);
+  assert.deepEqual(e, before);
+});
+
+// ---- compareBest ----
+
+const BIDS = [0, 1, 2, 3, 4, 5, 6].map((i) => 1000000010 + i);
+const BPRICES = [300, 320, 340, 360, 380, 400, 420];
+const BRAW = Object.fromEntries(BIDS.map((id, i) => [id, rawAdOf({ id, price: BPRICES[i] })]));
+const OPTS = { cat: '17010', params: { phm: '5380' } };
+const bestOf = (tr, over = {}) => compareBest(tr, OPTS, { top: 3, now: () => NOW, clock: CLOCK, ...over });
+
+function bestMarket(gone = [], ids = BIDS, total = ids.length) {
+  return fakeTransport((p) => {
+    const id = itemIdOf(p);
+    if (!id) return pageOf(ids.map((x) => BRAW[x]), total);
+    if (gone.includes(id)) throw new KufarError('NOT_FOUND', 'Не найдено', { status: 404 });
+    return { result: BRAW[id] };
+  });
+}
+
+test('compareBest: the answer has group, stats, reliability, picked, skipped and the keys of compare', async () => {
+  const r = await bestOf(bestMarket());
+  assert.deepEqual(Object.keys(r).sort(), ['ads', 'count', 'differs', 'group', 'mixed_categories', 'missing', 'picked', 'reliability', 'same', 'skipped', 'stats']);
+  assert.equal(r.group.cat, '17010');
+  assert.deepEqual(r.group.params, { phm: '5380' });
+  assert.ok(r.stats.all);
+  assert.ok(['good', 'medium', 'low', 'insufficient'].includes(r.reliability.level));
+});
+
+test('compareBest: the cheapest top listings are picked and compared, ads in the order of picked', async () => {
+  const tr = bestMarket();
+  const r = await bestOf(tr);
+  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[0]}`, `${BIDS[1]}`, `${BIDS[2]}`]);
+  assert.deepEqual(r.ads.map((a) => a.id), r.picked.map((x) => x.id));
+  assert.equal(r.count, 3);
+  assert.deepEqual(r.missing, []);
+  assert.deepEqual(r.differs, compareAds(r.ads.map((a) => normalizeAd(BRAW[a.id]))).differs);
+  assert.equal(tr.calls.filter((c) => c.path === SEARCH_PATH).length >= 1, true);
+  assert.deepEqual(tr.calls.filter((c) => itemIdOf(c.path)).map((c) => itemIdOf(c.path)), r.picked.map((x) => x.id));
+});
+
+test('compareBest: top limits the number of picked listings', async () => {
+  const r = await bestOf(bestMarket(), { top: 2 });
+  assert.equal(r.picked.length, 2);
+  assert.equal(r.count, 2);
+});
+
+test('compareBest: a picked listing whose card is gone goes to missing and is absent from picked', async () => {
+  const r = await bestOf(bestMarket([`${BIDS[1]}`]));
+  assert.deepEqual(r.missing, [`${BIDS[1]}`]);
+  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[0]}`, `${BIDS[2]}`]);
+  assert.deepEqual(r.ads.map((a) => a.id), [`${BIDS[0]}`, `${BIDS[2]}`]);
+  assert.equal(r.count, 2);
+});
+
+test('compareBest: fewer than 2 picked -> NOT_ENOUGH with found and total_on_site, no card is requested', async () => {
+  const tr = bestMarket([], [BIDS[0]], 1);
+  await assert.rejects(bestOf(tr), (e) => {
+    assert.equal(e.name, 'KufarError');
+    assert.equal(e.code, 'NOT_ENOUGH');
+    assert.equal(e.details.found, 1);
+    assert.equal(e.details.total_on_site, 1);
+    return true;
+  });
+  assert.equal(tr.calls.filter((c) => itemIdOf(c.path)).length, 0);
+});
+
+test('compareBest: nothing found -> NOT_ENOUGH with found 0', async () => {
+  const tr = bestMarket([], [], 0);
+  await assert.rejects(bestOf(tr), (e) => {
+    assert.equal(e.code, 'NOT_ENOUGH');
+    assert.equal(e.details.found, 0);
+    return true;
+  });
+});
+
+test('compareBest: the group options are those of price, a missing cat is BAD_ARGS', async () => {
+  await rejectsCode(compareBest(bestMarket(), {}, { top: 3, now: () => NOW }), 'BAD_ARGS');
 });

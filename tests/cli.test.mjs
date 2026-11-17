@@ -1108,11 +1108,13 @@ const log = process.env.FAKE_LOG;
 const items = JSON.parse(process.env.FAKE_ITEMS || '{}');
 const saved = JSON.parse(process.env.FAKE_SAVED || 'null');
 const raws = JSON.parse(process.env.FAKE_RAW || '{}');
+const found = JSON.parse(process.env.FAKE_SEARCH || '[]');
 const json = (body) => new Response(JSON.stringify(body), { status: 200 });
 globalThis.fetch = async (url) => {
   const u = new URL(url);
   const status = u.searchParams.get('status');
   fs.appendFileSync(log, JSON.stringify({ path: u.pathname, status }) + '\\n');
+  if (u.pathname === '/search-api/v2/search/rendered-paginated') return json({ ads: found, total: found.length, pagination: { pages: [] } });
   if (u.pathname === '/my-items-v2/v2/items') return json({ ads: items[status] ?? [] });
   if (u.pathname.startsWith('/insertion/v1/processing/load/')) return json({ result: saved });
   const rendered = u.pathname.match(/^\\/search-api\\/v2\\/item\\/(\\d+)\\/rendered$/);
@@ -1135,7 +1137,7 @@ const TREE = { categories: [{ id: 1000, name_ru: 'Родитель', subcategori
 const MY_CONTACT = { name: 'Тестовый Продавец', phone: '375290000000', email: 'a@example.com' };
 
 // runs a CLI command in a fresh state folder with a saved key, the cached tree and form, and the fake fetch
-async function runFake(args, { items = {}, saved = null, draft = {}, raw = {} } = {}) {
+async function runFake(args, { items = {}, saved = null, draft = {}, raw = {}, search = [] } = {}) {
   const dir = await tmpDir();
   const stateDir = path.join(dir, 'state');
   await fs.mkdir(path.join(stateDir, 'cache'), { recursive: true });
@@ -1154,7 +1156,7 @@ async function runFake(args, { items = {}, saved = null, draft = {}, raw = {} } 
   await fs.writeFile(file, JSON.stringify(draft));
   const r = spawnSync(process.execPath, ['--import', preload, CLI, ...args(file)], {
     cwd: ROOT, encoding: 'utf8', timeout: 30000,
-    env: { ...process.env, KUFAR_STATE_DIR: stateDir, FAKE_LOG: logFile, FAKE_ITEMS: JSON.stringify(items), FAKE_SAVED: JSON.stringify(saved), FAKE_RAW: JSON.stringify(raw) },
+    env: { ...process.env, KUFAR_STATE_DIR: stateDir, FAKE_LOG: logFile, FAKE_ITEMS: JSON.stringify(items), FAKE_SAVED: JSON.stringify(saved), FAKE_RAW: JSON.stringify(raw), FAKE_SEARCH: JSON.stringify(search) },
   });
   let json;
   try { json = JSON.parse(r.stdout); } catch { json = undefined; }
@@ -1278,3 +1280,48 @@ test('kufar compare: two refs give the comparison, each card flagged as item fla
   assert.ok('flags' in r.json.ads[0]);
   assert.deepEqual(r.json.ads[0], item.json.ad);
 });
+
+// ---- compare: the search form ----
+
+const BEST_IDS = [1000000011, 1000000012, 1000000013, 1000000014, 1000000015];
+const BEST_RAWS = Object.fromEntries(BEST_IDS.map((id, i) => [id, rawAdOf({ id, price: 300 + 20 * i })]));
+const bestRun = (...args) => runFake(() => ['compare', ...args], { raw: BEST_RAWS, search: Object.values(BEST_RAWS) });
+
+test('kufar compare --cat: finds the listings, picks the best, compares them with flagged cards', async () => {
+  const r = await bestRun('--cat', '17010', '--query', 'iphone');
+  assert.equal(r.status, 0, r.stdout);
+  assert.ok(Array.isArray(r.json.picked), r.stdout);
+  assert.equal(r.json.picked.length, 3);
+  assert.ok(r.json.skipped && Array.isArray(r.json.skipped.too_cheap), r.stdout);
+  assert.ok(r.json.stats, r.stdout);
+  assert.deepEqual(r.json.ads.map((a) => a.id), r.json.picked.map((x) => x.id));
+  const item = await runFake(() => ['item', String(BEST_IDS[0])], { raw: BEST_RAWS });
+  assert.equal(item.status, 0, item.stdout);
+  assert.deepEqual(r.json.ads[0], item.json.ad);
+  assert.ok('flags' in r.json.ads[0]);
+});
+
+test('kufar compare --cat --top 2: two listings are picked', async () => {
+  const r = await bestRun('--cat', '17010', '--query', 'iphone', '--top', '2');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.picked.length, 2);
+  assert.equal(r.json.count, 2);
+});
+
+for (const [name, args] of [
+  ['--top 1', ['--cat', '17010', '--query', 'iphone', '--top', '1']],
+  ['--top 6', ['--cat', '17010', '--query', 'iphone', '--top', '6']],
+  ['--top x', ['--cat', '17010', '--query', 'iphone', '--top', 'x']],
+  ['refs together with --cat', ['1000000011', '1000000012', '--cat', '17010', '--query', 'iphone']],
+  ['--top together with refs', ['1000000011', '1000000012', '--top', '3']],
+  ['--like', ['--like', '1000000011', '--by', 'phm']],
+  ['--by', ['--cat', '17010', '--query', 'iphone', '--by', 'phm']],
+  ['neither refs nor group options', []],
+]) {
+  test(`kufar compare: ${name} -> BAD_ARGS`, async () => {
+    const r = await bestRun(...args);
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    assert.notEqual(r.json.error.details?.command, 'compare', `compare is an unknown command: ${r.stdout}`);
+  });
+}
