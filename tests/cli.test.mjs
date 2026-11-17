@@ -713,3 +713,46 @@ for (const args of [['whoami'], ['track', 'list']]) {
     }
   });
 }
+
+// ---- step 3a: send, only the cases that end before the first request ----
+
+const SEND_BAD_ARGS = [
+  [['send'], 'no id'],
+  [['send', 'not-a-uuid', '--text', 'Привет'], 'id is not a UUID'],
+  [['send', UUID], 'no --text'],
+  [['send', UUID, '--text', 'Привет', '--confirm', 'abc'], 'confirm too short'],
+  [['send', UUID, '--text', 'Привет', '--confirm', '0123456789abc'], 'confirm too long'],
+  [['send', UUID, '--text', 'Привет', '--confirm', '0123456789AB'], 'confirm in upper case'],
+  [['send', UUID, '--text', 'Привет', '--confirm', '0123456789gh'], 'confirm with non-hex characters'],
+];
+for (const [args, why] of SEND_BAD_ARGS) {
+  test(`kufar send: ${why} -> BAD_ARGS, exit code 1`, async () => {
+    const r = await run(args);
+    assert.equal(r.status, 1);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    assert.notEqual(r.json.error.details?.command, 'send', `send is an unknown command: ${r.stdout}`);
+  });
+}
+
+test('kufar send without login -> AUTH_REQUIRED, exit code 1', async () => {
+  const r = await run(['send', UUID, '--text', 'Привет']);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'AUTH_REQUIRED', r.stdout);
+});
+
+test('kufar send with a saved key and a text that holds the key -> TEXT_HAS_KEY, exit code 1, the key is not in the output', async () => {
+  const { dir, token } = await idleDir({ idleDays: 0 });
+  const r = runIn(dir, ['send', UUID, '--text', `вот мой ключ: ${token}`]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'TEXT_HAS_KEY', r.stdout);
+  assert.ok(!r.stdout.includes(token), 'the key is in the output');
+  assert.ok(!r.stdout.includes('вот мой ключ'), 'the text is in the output');
+});
+
+test('kufar send with a saved key and the key split by spaces in the text -> TEXT_HAS_KEY, the key is not in the output', async () => {
+  const { dir, token } = await idleDir({ idleDays: 0 });
+  const r = runIn(dir, ['send', UUID, '--text', token.match(/.{1,6}/g).join(' ')]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'TEXT_HAS_KEY', r.stdout);
+  assert.ok(!r.stdout.includes(token));
+});

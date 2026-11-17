@@ -92,7 +92,7 @@ test('normalizeConversation: full example', () => {
     type: 'common',
     ad: {
       id: '1000000001', title: 'Катушка зажигания, новая', url: 'https://www.kufar.by/item/1000000001',
-      price_byn: 59, status: 'active', mine: true,
+      price_byn: 59, status: 'active',
     },
     with: 'Тестовый Покупатель',
     unread: 2,
@@ -134,12 +134,13 @@ test('normalizeConversation: ad link http becomes https, empty link is null', ()
   assert.equal(b.ad.url, null);
 });
 
-test('normalizeConversation: ad without status and with is_mine false', () => {
+test('normalizeConversation: ad without status; the ad has no mine field whatever is_mine says', () => {
   const info = { ...CONV_RAW.ad_info, is_mine: false };
   delete info.status;
   const n = normalizeConversation(conv({ ad_info: info }));
   assert.equal(n.ad.status, null);
-  assert.equal(n.ad.mine, false);
+  assert.ok(!('mine' in n.ad));
+  assert.ok(!('mine' in normalizeConversation(conv({ ad_info: { ...CONV_RAW.ad_info, is_mine: true } })).ad));
 });
 
 test('normalizeConversation: empty participant name is null', () => {
@@ -535,4 +536,109 @@ test('chat: notice is the first key and holds NOTICE, messages carry flags', asy
   assert.equal(Object.keys(r)[0], 'notice');
   assert.equal(r.notice, acct.NOTICE);
   assert.deepEqual(r.messages[0].flags, ['key']);
+});
+
+// ---- chat: started_by ----
+
+// Kufar answers newest first: the last element is the oldest message of the page
+const startedBy = async (reply, opts) => (await chat(chatTransport({ reply }), CONV_ID, opts)).started_by;
+const pageWith = (total, mineFlags, info = {}) => ({
+  conversation_info: conv({ total_messages_count: total, ...info }),
+  messages: mineFlags.map((m, i) => msg(`m${i}`, { is_mine: m })),
+});
+
+test('chat: started_by comes right after conversation', async () => {
+  const r = await chat(chatTransport({ reply: pageWith(2, [false, true]) }), CONV_ID);
+  const keys = Object.keys(r);
+  assert.equal(keys[keys.indexOf('conversation') + 1], 'started_by');
+});
+
+test('chat: started_by is me when the oldest message of a page that reached the start is mine', async () => {
+  assert.equal(await startedBy(pageWith(3, [false, false, true])), 'me');
+});
+
+test('chat: started_by is them when the oldest message of a page that reached the start is not mine', async () => {
+  assert.equal(await startedBy(pageWith(3, [true, true, false])), 'them');
+  assert.equal(await startedBy(pageWith(1, [true].map(() => undefined))), 'them');
+});
+
+test('chat: started_by uses offset plus page size against total_messages_count', async () => {
+  assert.equal(await startedBy(pageWith(5, [false, true]), { limit: 50, offset: 3 }), 'me');
+  assert.equal(await startedBy(pageWith(5, [false, true]), { limit: 50, offset: 4 }), 'me');
+});
+
+test('chat: started_by is null when the page did not reach the start', async () => {
+  assert.equal(await startedBy(pageWith(5, [false, true]), { limit: 50, offset: 0 }), null);
+  assert.equal(await startedBy(pageWith(5, [false, true]), { limit: 50, offset: 2 }), null);
+});
+
+test('chat: started_by is null when total_messages_count is not a number', async () => {
+  for (const total of ['3', null, undefined, {}]) {
+    assert.equal(await startedBy(pageWith(total, [false, true, true])), null, String(total));
+  }
+});
+
+test('chat: started_by is null when the page has no messages', async () => {
+  assert.equal(await startedBy({ conversation_info: conv({ total_messages_count: 0 }), messages: [] }), null);
+});
+
+test('chat: started_by is null when conversation is null', async () => {
+  assert.equal(await startedBy({ messages: [msg('m1', { is_mine: true })] }), null);
+});
+
+test('chat: started_by is null for system and system_with_ad conversations', async () => {
+  for (const type of ['system', 'system_with_ad']) {
+    assert.equal(await startedBy(pageWith(2, [false, true], { type })), null, type);
+  }
+});
+
+// ---- sendTarget ----
+
+const targetReply = (over = {}) => ({ conversation_info: conv(), messages: [msg('m1')], ...over });
+
+test('sendTarget: one request with the path and limit 1, offset 0', async () => {
+  const t = chatTransport({ reply: targetReply() });
+  await acct.acct.sendTarget(t, CONV_ID);
+  assert.equal(t.calls.length, 1);
+  assert.equal(t.calls[0].path, msgsPath(CONV_ID));
+  assert.deepEqual(t.calls[0].query, { limit: 1, offset: 0 });
+});
+
+test('sendTarget: result is conversation_id, to and ad from the normalized conversation', async () => {
+  const r = await acct.acct.sendTarget(chatTransport({ reply: targetReply() }), CONV_ID);
+  const n = normalizeConversation(CONV_RAW);
+  assert.deepEqual(r, { conversation_id: CONV_ID, to: n.with, ad: n.ad });
+  assert.deepEqual(Object.keys(r), ['conversation_id', 'to', 'ad']);
+});
+
+test('sendTarget: the id given is returned as given', async () => {
+  const id = 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE';
+  const r = await acct.acct.sendTarget(chatTransport({ reply: targetReply() }), id);
+  assert.equal(r.conversation_id, id);
+});
+
+test('sendTarget: id that is not a UUID is BAD_ARGS before any request', async () => {
+  for (const id of ['not-a-uuid', '', `${CONV_ID}/extra`, '../x', undefined, 5]) {
+    const t = chatTransport({ reply: targetReply() });
+    await rejectsCode(acct.sendTarget(t, id), 'BAD_ARGS');
+    assert.equal(t.calls.length, 0, String(id));
+  }
+});
+
+test('sendTarget: reply without conversation_info is BAD_RESPONSE', async () => {
+  for (const reply of [{ messages: [] }, { conversation_info: null, messages: [] }, {}]) {
+    await rejectsCode(acct.sendTarget(chatTransport({ reply }), CONV_ID), 'BAD_RESPONSE');
+  }
+});
+
+test('sendTarget: a blocked conversation is CHAT_BLOCKED, on each of the three flags', async () => {
+  for (const flag of ['is_blocked', 'is_blocked_participant', 'is_blocked_by_participant']) {
+    const reply = targetReply({ conversation_info: conv({ [flag]: true }) });
+    await rejectsCode(acct.sendTarget(chatTransport({ reply }), CONV_ID), 'CHAT_BLOCKED');
+  }
+});
+
+test('sendTarget: NOT_FOUND from the transport is passed through', async () => {
+  const t = fakeTransport(() => { throw new KufarError('NOT_FOUND', 'нет диалога', { status: 404 }); });
+  await rejectsCode(acct.sendTarget(t, CONV_ID), 'NOT_FOUND');
 });
