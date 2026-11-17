@@ -328,7 +328,7 @@ test('confirmCode: success -> auth.json saved, login-pending.json removed, the r
   const result = await confirmCode({
     stateDir: dir, code: '12345678', fetchImpl: fakeFetch(() => jsonRes(200, { jwt, 'session-id': 'SESSION-MARK' })), now,
   });
-  assert.deepEqual(result, { logged_in: true, expires_at: new Date(NOW + 30 * DAY).toISOString(), days_left: 30 });
+  assert.deepEqual(result, { logged_in: true, expires_at: new Date(NOW + 30 * DAY).toISOString(), days_left: 30, idle_days_left: 30 });
   assert.ok(!JSON.stringify(result).includes(jwt));
   assert.equal((await readJson(authFile(dir))).token, jwt);
   assert.equal((await fs.stat(authFile(dir))).mode & 0o777, 0o600);
