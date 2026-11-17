@@ -4,10 +4,14 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-const JPEG_ORDER = ['location', 'exif', 'xmp', 'iptc', 'comment', 'extra'];
-const PNG_ORDER = ['exif', 'text', 'time'];
+const JPEG_ORDER = ['location', 'exif', 'xmp', 'iptc', 'comment', 'other', 'extra'];
+const PNG_ORDER = ['exif', 'text', 'time', 'other'];
 const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PNG_DROP = { eXIf: 'exif', tEXt: 'text', zTXt: 'text', iTXt: 'text', tIME: 'time' };
+// the chunks a picture is drawn from; any other chunk is dropped
+const PNG_KEEP = new Set(['IHDR', 'PLTE', 'IDAT', 'IEND', 'tRNS', 'gAMA', 'cHRM', 'sRGB', 'iCCP', 'sBIT', 'bKGD', 'pHYs', 'hIST', 'sPLT', 'cICP']);
+
+export const isPng = (data) => data.length >= 8 && data.subarray(0, 8).equals(PNG_SIG);
 const EXIF_HEAD = 'Exif\0\0';
 
 const ordered = (found, order) => order.filter((t) => found.has(t));
@@ -71,6 +75,8 @@ function cleanJpeg(data) {
   let orientation;
   let pos = 2;
   for (;;) {
+    // fill bytes before a marker
+    while (pos + 1 < data.length && data[pos] === 0xff && data[pos + 1] === 0xff) pos += 1;
     if (pos + 4 > data.length || data[pos] !== 0xff) return null;
     const marker = data[pos + 1];
     if (marker === 0xd9) return null;
@@ -82,7 +88,8 @@ function cleanJpeg(data) {
     pos += 2 + len;
     if (marker === 0xe1 && payload.toString('latin1', 0, 6) === EXIF_HEAD) {
       const ifd0 = readIfd0(payload.subarray(6));
-      if (ifd0 && ifd0.entries.size === 1 && ifd0.entries.has(0x0112) && ifd0.next === 0) {
+      // kept only when there is no room in it for anything but the tag
+      if (payload.length === 32 && ifd0 && ifd0.entries.size === 1 && ifd0.entries.has(0x0112) && ifd0.next === 0) {
         kept.push(segment);
         continue;
       }
@@ -93,6 +100,9 @@ function cleanJpeg(data) {
     } else if (marker === 0xe1) found.add('xmp');
     else if (marker === 0xed) found.add('iptc');
     else if (marker === 0xfe) found.add('comment');
+    // of the application segments a picture needs JFIF, the colour profile and the Adobe colour note
+    else if (marker >= 0xe0 && marker <= 0xef && marker !== 0xe0 && marker !== 0xee
+      && !(marker === 0xe2 && payload.toString('latin1', 0, 12) === 'ICC_PROFILE\0')) found.add('other');
     else kept.push(segment);
   }
   if (orientation !== undefined) kept.splice(kept[0]?.[1] === 0xe0 ? 1 : 0, 0, orientationSegment(orientation));
@@ -112,8 +122,8 @@ function cleanPng(data) {
     const end = pos + 12 + data.readUInt32BE(pos);
     if (end > data.length) return null;
     const type = data.toString('latin1', pos + 4, pos + 8);
-    if (PNG_DROP[type]) found.add(PNG_DROP[type]);
-    else kept.push(data.subarray(pos, end));
+    if (PNG_KEEP.has(type)) kept.push(data.subarray(pos, end));
+    else found.add(PNG_DROP[type] ?? 'other');
     pos = end;
     if (type === 'IEND') break;
   }
@@ -132,7 +142,7 @@ export async function convertHeic(file) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'kufar-heic-'));
   try {
     const out = path.join(dir, 'photo.jpg');
-    await run('/usr/bin/sips', ['-s', 'format', 'jpeg', path.resolve(file), '--out', out], { timeout: 30000 });
+    await run('/usr/bin/sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '80', path.resolve(file), '--out', out], { timeout: 30000 });
     return await fs.readFile(out);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

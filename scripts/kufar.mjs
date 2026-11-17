@@ -252,7 +252,8 @@ async function compareCmd(args) {
     if (new Set(ids).size !== ids.length) throw bad('compare: одно объявление указано дважды');
     const ctx = await getClockCtx();
     const res = await compare(ctx.transport, ids);
-    return { ...res, ads: flagAds(res.ads, ctx.now(), ctx.clock) };
+    // each card on its own, as `item` does: two cards of one seller are not duplicates of each other here
+    return { ...res, ads: res.ads.map((ad) => flagAds([ad], ctx.now(), ctx.clock)[0]) };
   }
   if (!group) throw bad('compare: нужны 2–5 объявлений или условия поиска (--cat …)');
   if (v.top !== undefined && !/^[2-5]$/.test(v.top)) throw bad('--top: число от 2 до 5', { top: v.top });
@@ -261,7 +262,7 @@ async function compareCmd(args) {
   };
   const ctx = await getClockCtx();
   const res = await compareBest(ctx.transport, opts, { top: v.top === undefined ? 3 : Number(v.top), now: ctx.now, clock: ctx.clock });
-  return { ...res, ads: flagAds(res.ads, ctx.now(), ctx.clock) };
+  return { ...res, ads: res.ads.map((ad) => flagAds([ad], ctx.now(), ctx.clock)[0]) };
 }
 
 const categoryTree = (ctx) => cached(path.join(ctx.stateDir, 'cache', 'category-tree.json'), DAY,

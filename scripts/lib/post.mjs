@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { KufarError } from './errors.mjs';
 import { readJson, writeJsonAtomic } from './storage.mjs';
 import { VERSION } from './transport.mjs';
-import { cleanPhoto, convertHeic as sipsToJpeg } from './photo.mjs';
+import { cleanPhoto, isPng, convertHeic as sipsToJpeg } from './photo.mjs';
 
 const UPLOAD_URL = 'https://ads-image-uploader.kufar.by/v1/images';
 const INSERT_URL = 'https://api.kufar.by/insertion/v1/processing/insert';
@@ -137,11 +137,13 @@ export async function photoInfo(files, { platform = process.platform, convertHei
     } catch {
       throw badFile();
     }
-    const cleaned = cleanPhoto(raw, heic ? 'jpg' : ext);
+    // the bytes decide what the picture is: a downloaded .jpg is often a png and the other way round
+    const kind = heic ? 'jpg' : isPng(raw) ? 'png' : ext === 'png' ? 'jpg' : ext;
+    const cleaned = cleanPhoto(raw, kind);
     if (!cleaned) throw badFile();
     const { data, removed } = cleaned;
     if (data.length <= MIN_PHOTO || data.length > MAX_PHOTO) throw badFile();
-    out.push({ file, ext: heic ? 'jpg' : ext, bytes: data.length, sha256: sha256(data), data, removed: heic ? ['heic', ...removed] : removed });
+    out.push({ file, ext: kind, bytes: data.length, sha256: sha256(data), data, removed: heic ? ['heic', ...removed] : removed });
   }
   return out;
 }
