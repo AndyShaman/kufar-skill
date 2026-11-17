@@ -771,9 +771,9 @@ test('newDialogTarget: check NOT_FOUND -> info is requested, the result is ad an
 
 test('newDialogTarget: missing optional values are null, the id is a string', async () => {
   const newDialogTarget = await newDialogTargetOf();
-  const r = await newDialogTarget(adTransport({ info: { ad_info: { id: 5 } } }), '5');
+  const r = await newDialogTarget(adTransport({ info: { ad_info: { id: 5 } } }), '1000000001');
   assert.deepEqual(r, { ad: { id: '5', title: null, price_byn: null, url: null }, to: null });
-  const z = await newDialogTarget(adTransport({ info: { ad_info: { id: 5, price_byn: '0', link: '' }, participant_info: {} } }), '5');
+  const z = await newDialogTarget(adTransport({ info: { ad_info: { id: 5, price_byn: '0', link: '' }, participant_info: {} } }), '1000000001');
   assert.deepEqual(z, { ad: { id: '5', title: null, price_byn: null, url: null }, to: null });
 });
 
