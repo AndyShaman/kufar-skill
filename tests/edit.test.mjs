@@ -225,7 +225,7 @@ test('buildEdit: value rules apply to a changed value', async () => {
   assert.equal((await errorsOf({ changes: { mileage: '12a' } })).mileage, 'bad_value');
 });
 test('buildEdit: value rules apply to a saved value, the field is named in the errors', async () => {
-  assert.equal((await errorsOfS({ subject: 'а'.repeat(51) })).subject, 'length');
+  assert.equal((await errorsOfS({ subject: 'а'.repeat(51) }, { changes: { body: 'Новое описание' } })).subject, 'length');
   assert.equal((await errorsOfS({ note: 'ab' }, { changes: { body: 'Новое описание' } })).note, 'length');
 });
 test('buildEdit: a saved required field that is missing -> required', async () => {
