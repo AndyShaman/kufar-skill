@@ -1,6 +1,6 @@
 import { KufarError } from './errors.mjs';
 import { fetchAd } from './ads.mjs';
-import { search, ageDays, STALE_DAYS } from './search.mjs';
+import { search, flagAds, STALE_DAYS } from './search.mjs';
 import { priceStats, cleanForPricing, reliability, position } from './stats.mjs';
 
 const NOTE = 'Это цены объявлений, а не сделок.';
@@ -15,7 +15,7 @@ function contradicts(wanted, value) {
 
 const medianOf = (ads) => priceStats(ads.map((a) => a.price_byn)).median;
 
-export async function estimatePrice(transport, { cat, params = {}, query, regions, exclude = [], include = [], like, by, now = Date.now } = {}) {
+export async function estimatePrice(transport, { cat, params = {}, query, regions, exclude = [], include = [], like, by, now = Date.now, clock = null } = {}) {
   let subjectAd = null;
   if (like !== undefined) {
     subjectAd = await fetchAd(transport, like);
@@ -40,14 +40,13 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
   const base = byWords ? { cat, query, regions, sort: 'new', limit: 200 } : { cat, params, regions, sort: 'new', limit: 200 };
   const notSubject = (ads) => ads.filter((a) => a.id !== subjectAd?.id);
 
-  const fresh = await search(transport, base, { now });
+  const fresh = await search(transport, base, { now, clock });
   const freshAds = notSubject(fresh.ads);
   const pool = new Map(freshAds.map((a) => [a.id, a]));
 
   let oldCount = 0;
-  const last = fresh.pages.filter((p) => p.num > 2).sort((a, b) => b.num - a.num)[0];
-  if (fresh.total > 400 && last) {
-    const old = notSubject((await search(transport, { ...base, cursor: last.cursor }, { now })).ads);
+  if (fresh.total > fresh.ads.length) {
+    const old = notSubject((await search(transport, { ...base, sort: 'old' }, { now, clock })).ads);
     for (const a of old) {
       if (pool.has(a.id)) continue;
       pool.set(a.id, a);
@@ -58,7 +57,7 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
   const unclassified = [];
   if (!byWords && query) {
     const inc = new Set(include.map(String));
-    const words = notSubject((await search(transport, { cat, query, regions, sort: 'new', limit: 200 }, { now })).ads);
+    const words = notSubject((await search(transport, { cat, query, regions, sort: 'new', limit: 200 }, { now, clock })).ads);
     for (const ad of words) {
       if (pool.has(ad.id)) continue;
       const own = Object.values(ad.params);
@@ -91,7 +90,8 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
   const round = st.median >= 20 ? Math.round : (x) => Math.round(x * 100) / 100;
   const liveMedian = medianOf(live);
   const staleMedian = medianOf(staleAds);
-  const subjectDays = subjectAd && ageDays(subjectAd.listed_at, now());
+  const subjectFlagged = subjectAd && flagAds([subjectAd], now(), clock)[0];
+  const isBumped = (a) => a.flags.includes('bumped');
 
   return {
     group: { cat, params, query: query ?? null, regions: regions ?? null },
@@ -100,8 +100,10 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
       title: subjectAd.title,
       price_byn: subjectAd.price_byn,
       url: subjectAd.url,
-      days: subjectDays,
-      stale: subjectDays !== null && subjectDays >= STALE_DAYS,
+      days: subjectFlagged.days,
+      age_days: subjectFlagged.age_days,
+      stale: isStale(subjectFlagged),
+      bumped: isBumped(subjectFlagged),
       position: subjectAd.price_byn === null ? null : position(subjectAd.price_byn, st),
     },
     total_on_site: fresh.total,
@@ -112,14 +114,17 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
       days: STALE_DAYS,
       n: staleAds.length,
       median: staleMedian,
+      bumped: { n: staleAds.filter(isBumped).length, median: medianOf(staleAds.filter(isBumped)) },
       vs_live_pct: staleMedian === null || liveMedian === null ? null : Math.round((staleMedian / liveMedian - 1) * 100),
       cheap: liveMedian === null ? [] : staleAds.filter((a) => a.price_byn <= liveMedian)
         .sort((a, b) => a.price_byn - b.price_byn).slice(0, 10)
-        .map(({ id, title, price_byn, days, url }) => ({ id, title, price_byn, days, url })),
+        .map(({ id, title, price_byn, days, age_days, flags, url }) => ({ id, title, price_byn, days, age_days, bumped: flags.includes('bumped'), url })),
     },
     suggest: rel.level === 'insufficient' ? null : { fast: round(st.q1), market: round(st.median), high: round(st.q3), basis },
     comparables: [...kept].sort((a, b) => a.price_byn - b.price_byn)
-      .map(({ id, title, price_byn, company, listed_at, days, flags, url }) => ({ id, title, price_byn, company, listed_at, days, stale: flags.includes('stale'), url })),
+      .map(({ id, title, price_byn, company, listed_at, days, age_days, flags, url }) => ({
+        id, title, price_byn, company, listed_at, days, age_days, stale: flags.includes('stale'), bumped: flags.includes('bumped'), url,
+      })),
     dropped,
     unclassified,
     note: NOTE,

@@ -1,7 +1,8 @@
 import { KufarError } from './errors.mjs';
 import { normalizeAd } from './ads.mjs';
+import { ageByClock } from './clock.mjs';
 
-const SORTS = { new: 'lst.d', cheap: 'prc.a', expensive: 'prc.d' };
+const SORTS = { new: 'lst.d', old: 'lst.a', cheap: 'prc.a', expensive: 'prc.d' };
 const RESERVED = new Set(['cat', 'query', 'lang', 'sort', 'size', 'cursor', 'prc', 'rgn']);
 const MAX_KOPECKS = 2000000000;
 const SUSPECT_WORDS = ['запчаст', 'на разбор', 'на детали', 'куплю', 'заблокирован', 'icloud', 'не включается', 'под восстановление'];
@@ -11,7 +12,7 @@ const bad = (message, details) => new KufarError('BAD_ARGS', message, details);
 export function buildSearchQuery(opts) {
   const { cat, query, params = {}, regions, priceMin, priceMax, condition, seller, delivery, sort = 'new', limit = 30, cursor } = opts;
   if (!cat && !query) throw bad('Нужна рубрика (--cat) или слова (--query)');
-  if (!(sort in SORTS)) throw bad('sort: new, cheap или expensive', { sort });
+  if (!(sort in SORTS)) throw bad('sort: new, old, cheap или expensive', { sort });
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw bad('limit: целое от 1 до 200', { limit });
 
   const q = {};
@@ -55,6 +56,7 @@ export function buildSearchQuery(opts) {
 }
 
 export const STALE_DAYS = 30;
+export const BUMP_GAP_DAYS = 7;
 
 export function ageDays(listedAt, now) {
   const t = listedAt ? Date.parse(listedAt) : NaN;
@@ -62,19 +64,19 @@ export function ageDays(listedAt, now) {
   return Math.max(0, Math.floor((now - t) / 86400000));
 }
 
-export async function search(transport, opts, { now = Date.now } = {}) {
+export async function search(transport, opts, { now = Date.now, clock = null } = {}) {
   const query = buildSearchQuery(opts);
   const raw = await transport.getJson('/search-api/v2/search/rendered-paginated', query);
   const pages = raw.pagination?.pages ?? [];
   return {
     total: raw.total ?? 0,
-    ads: flagAds((raw.ads ?? []).map(normalizeAd), now()),
+    ads: flagAds((raw.ads ?? []).map(normalizeAd), now(), clock),
     next_cursor: pages.find((p) => p.label === 'next')?.token || null,
     pages: pages.filter((p) => p.token).map((p) => ({ num: p.num, cursor: p.token })),
   };
 }
 
-export function flagAds(ads, now = Date.now()) {
+export function flagAds(ads, now = Date.now(), clock = null) {
   const seen = new Set();
   return ads.map((ad) => {
     const flags = [];
@@ -88,7 +90,11 @@ export function flagAds(ads, now = Date.now()) {
       seen.add(key);
     }
     const days = ageDays(ad.listed_at, now);
-    if (days !== null && days >= STALE_DAYS) flags.push('stale');
-    return { ...ad, flags, days };
+    const age_days = ageByClock(clock, ad.id, days, now);
+    if (ad.company !== true) {
+      if (age_days !== null && age_days >= STALE_DAYS) flags.push('stale');
+      if (age_days !== null && days !== null && days < BUMP_GAP_DAYS && age_days - days >= BUMP_GAP_DAYS) flags.push('bumped');
+    }
+    return { ...ad, flags, days, age_days };
   });
 }

@@ -32,7 +32,7 @@ function watchFile(ctx, name) {
   return path.join(watchesDir(ctx), `${name}.json`);
 }
 
-const watchSearch = (ctx, opts) => search(ctx.transport, { ...opts, sort: 'new', limit: 200 }, { now: ctx.now });
+const watchSearch = (ctx, opts) => search(ctx.transport, { ...opts, sort: 'new', limit: 200 }, { now: ctx.now, clock: ctx.clock ?? null });
 
 export async function watchAdd(ctx, name, opts) {
   const file = watchFile(ctx, name);

@@ -5,7 +5,8 @@ import { resolveStateDir, cached } from './lib/storage.mjs';
 import { createTransport } from './lib/transport.mjs';
 import { fetchAd } from './lib/ads.mjs';
 import { findCategories, parentOf, listParams, findParamValues } from './lib/taxonomy.mjs';
-import { search, flagAds } from './lib/search.mjs';
+import { buildSearchQuery, search, flagAds } from './lib/search.mjs';
+import { loadClock } from './lib/clock.mjs';
 import { estimatePrice } from './lib/price.mjs';
 import {
   watchAdd, watchCheck, watchList, watchRemove, trackAdd, trackCheck, trackList, trackRemove,
@@ -89,6 +90,11 @@ function getCtx() {
   return { stateDir, transport: createTransport({ stateDir }), now: Date.now };
 }
 
+async function getClockCtx() {
+  const ctx = getCtx();
+  return { ...ctx, clock: await loadClock(ctx) };
+}
+
 const categoryTree = (ctx) => cached(path.join(ctx.stateDir, 'cache', 'category-tree.json'), DAY,
   () => ctx.transport.getJson('/category-tree/v1/category_tree'));
 
@@ -117,28 +123,38 @@ async function run(argv) {
     case 'search': {
       const { values } = parse(rest, SEARCH_OPTIONS);
       const opts = { ...filterOpts(values), sort: values.sort, limit: num(values.limit, '--limit'), cursor: values.cursor };
-      const r = await search(getCtx().transport, opts);
+      buildSearchQuery(opts);
+      const ctx = await getClockCtx();
+      const r = await search(ctx.transport, opts, { now: ctx.now, clock: ctx.clock });
       return { total: r.total, count: r.ads.length, ads: r.ads, next_cursor: r.next_cursor };
     }
     case 'item': {
       const { arg } = parse(rest, {}, 1);
-      const ad = await fetchAd(getCtx().transport, arg);
-      return { ad: flagAds([ad])[0] };
+      const ctx = getCtx();
+      const ad = await fetchAd(ctx.transport, arg);
+      const clock = await loadClock(ctx);
+      return { ad: flagAds([ad], ctx.now(), clock)[0] };
     }
     case 'price': {
       const { values: v } = parse(rest, PRICE_OPTIONS);
-      return estimatePrice(getCtx().transport, {
+      const opts = {
         cat: v.cat, params: parseParams(v.param), query: v.query, regions: v.region,
         exclude: csv(v.exclude), include: csv(v.include), like: v.like, by: csv(v.by),
-      });
+      };
+      const ctx = await getClockCtx();
+      return estimatePrice(ctx.transport, { ...opts, now: ctx.now, clock: ctx.clock });
     }
     case 'watch': {
       const [sub, ...args] = rest;
       if (sub === 'add') {
         const { values, arg } = parse(args, FILTER_OPTIONS, 1);
-        return watchAdd(getCtx(), arg, filterOpts(values));
+        const opts = filterOpts(values);
+        return watchAdd(await getClockCtx(), arg, opts);
       }
-      if (sub === 'check') return watchCheck(getCtx(), parse(args, {}, 1).arg);
+      if (sub === 'check') {
+        const { arg } = parse(args, {}, 1);
+        return watchCheck(await getClockCtx(), arg);
+      }
       if (sub === 'list') { parse(args, {}); return watchList(getCtx()); }
       if (sub === 'remove') return watchRemove(getCtx(), parse(args, {}, 1).arg);
       throw bad('watch: add, check, list или remove', { sub });
