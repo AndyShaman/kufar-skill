@@ -756,3 +756,29 @@ test('kufar send with a saved key and the key split by spaces in the text -> TEX
   assert.equal(r.json?.error?.code, 'TEXT_HAS_KEY', r.stdout);
   assert.ok(!r.stdout.includes(token));
 });
+
+// ---- step 3c: form, only the cases that end before the first request ----
+
+const FORM_BAD_ARGS = [
+  [['form'], 'no --cat'],
+  [['form', '--cat', 'abc'], '--cat is not digits'],
+  [['form', '--cat', '2040', '--set', 'novalue'], '--set without ='],
+  [['form', '--cat', '2040', '--set', '=6'], '--set with an empty name'],
+  [['form', '--cat', '2040', '--set', 'category=2040'], '--set category'],
+  [['form', '--cat', '2040', '--set', 'company_ad=1'], '--set company_ad'],
+  [['form', '--cat', '2040', '--find', ''], 'empty --find'],
+];
+for (const [args, why] of FORM_BAD_ARGS) {
+  test(`kufar form: ${why} -> BAD_ARGS, exit code 1`, async () => {
+    const r = await run(args);
+    assert.equal(r.status, 1);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    assert.notEqual(r.json.error.details?.command, 'form', `form is an unknown command: ${r.stdout}`);
+  });
+}
+
+test('unknown command message names form', async () => {
+  const r = await run(['bogus']);
+  assert.equal(r.json.error.code, 'BAD_ARGS');
+  assert.match(r.json.error.message, /\bform\b/);
+});

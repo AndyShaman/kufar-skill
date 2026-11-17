@@ -203,7 +203,7 @@ const LOGIN_PATHS = [
   '/messaging-api/v4/conversations',
   `/messaging-api/v4/conversations/${UUID}/messages`,
 ];
-const OPEN_PATHS = [COUNT, '/search-api/v2/item/1000000001/rendered', '/search-api/v2/search/rendered-paginated'];
+const OPEN_PATHS = [COUNT, '/search-api/v2/item/1000000001/rendered', '/search-api/v2/search/rendered-paginated', '/insertion/v1/meta/bootstrap'];
 
 async function setupAuth({ responses = [res(200, { ok: true })], last, getToken, random = () => 0 } = {}) {
   const stateDir = await tmpDir();
