@@ -173,7 +173,9 @@ test('compare: another error is thrown as it is', async () => {
 // an estimate in the shape estimatePrice returns; each comparable is [price] or [price, 'stale']
 function estimateOf(median, rows, level = 'good', total = rows.length) {
   return {
-    stats: { all: {}, private: {}, company: {}, median },
+    stats: { all: { median }, private: {}, company: {} },
+    // the median that `price` names: null when the estimate is not reliable enough
+    suggest: level === 'insufficient' ? null : { fast: median, market: median, high: median, basis: 'all' },
     reliability: { level, reasons: [] },
     total_on_site: total,
     comparables: rows.map(([price, stale], i) => ({
