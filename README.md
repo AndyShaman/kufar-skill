@@ -81,7 +81,7 @@
 
 ## Автор
 
-Andy Shaman: [GitHub](https://github.com/AndyShaman), Telegram-канал [«Дрессировщик Нейросетей»](https://t.me/AI_Handler).
+Andy Shaman: [GitHub](https://github.com/AndyShaman), сайт [ai-handler.com](https://ai-handler.com). <!-- personal-ok -->
 
 Нашли ошибку - напишите issue и приложите команду и ответ скилла (без ключа и личных данных).
 
