@@ -182,7 +182,7 @@ test('kufar login with a relative KUFAR_BROWSER -> BAD_ARGS', async () => {
   assert.equal(JSON.parse(r.stdout).error.code, 'BAD_ARGS');
 });
 
-test('kufar login parse errors give one fixed hint, no details, and do not repeat the arguments', async () => {
+test('kufar login parse errors give one fixed hint, a bad phone or code its own reason; no details, the arguments are not repeated', async () => {
   const marks = ['ARG-MARK-ONE', 'ARG-MARK-TWO'];
   const cases = [
     ['login', marks[0]],
@@ -204,6 +204,8 @@ test('kufar login parse errors give one fixed hint, no details, and do not repea
     assert.equal(r.json.error.code, 'BAD_ARGS');
     assert.equal(r.json.error.details, undefined);
     assert.ok(!r.stdout.includes('ARG-MARK'), r.stdout);
+    // a single --phone or --code with a bad value names what is wrong with it
+    if (args.length === 3 && (args[1] === '--phone' || args[1] === '--code')) continue;
     messages.add(r.json.error.message);
   }
   assert.equal(messages.size, 1, 'the hint message is the same for every parse error');

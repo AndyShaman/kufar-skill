@@ -153,7 +153,7 @@ for (const v of ['12', '-5', '1.5']) {
     assert.equal(adOf({ mileage: v }).mileage, v);
   });
 }
-for (const v of ['12a', 12, '', '1,5']) {
+for (const v of ['12a', true, '', '1,5']) {
   test(`buildAd: number ${JSON.stringify(v)} -> bad_value`, () => {
     assert.equal(errorsOf({ mileage: v }).mileage, 'bad_value');
   });
