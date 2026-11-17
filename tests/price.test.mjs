@@ -142,7 +142,7 @@ test('sample.fresh counts ads before cleaning', async () => {
 });
 
 test('words mode: query without params, single slice with query', async () => {
-  const tr = mk(() => pageOf(series(1000000001, SIX), 100));
+  const tr = mk(() => pageOf(series(1000000001, SIX), 6));
   const r = await estimatePrice(tr, { cat: '17010', query: 'iphone 13' });
   const s = searches(tr);
   assert.equal(s.length, 1);
