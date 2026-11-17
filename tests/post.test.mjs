@@ -818,3 +818,10 @@ test('buildAd: a number field given as a JSON number is stored as a string; NaN 
   assert.equal(adOf({ mileage: '2020' }).mileage, '2020');
   for (const bad of [NaN, Infinity, -Infinity]) assert.equal(errorsOf({ mileage: bad }).mileage, 'bad_value');
 });
+
+test('photoInfo: a picture whose name does not match its bytes (png bytes in a .jpg) is cleaned by its bytes', async (t) => {
+  const file = await writePhoto(t, 'a.jpg', png(IHDR, chunk('tEXt', Buffer.from('Comment\0x', 'latin1')), chunk('IDAT', Buffer.alloc(20000, 5)), IEND));
+  const [info] = await photoInfo([file]);
+  assert.equal(info.ext, 'png');
+  assert.deepEqual(info.removed, ['text']);
+});

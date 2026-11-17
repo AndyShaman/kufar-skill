@@ -284,3 +284,48 @@ test('cleanPhoto: a picture cut off before its end marker is kept to the last by
   assert.deepEqual(r.data, cut);
   assert.deepEqual(r.removed, []);
 });
+
+// ---- after the review: only what a picture needs is kept ----
+
+const sosHead = Buffer.from([1, 1, 0, 0, 63, 0]);
+
+test('cleanPhoto: application segments a picture does not need (C2PA, Ducky, the multi-picture index) are dropped as other', () => {
+  const c2pa = seg(0xeb, Buffer.from('JP\0\0C2PASECRET', 'latin1'));
+  const ducky = seg(0xec, Buffer.from('Ducky\0DUCKYSECRET', 'latin1'));
+  const mpf = seg(0xe2, Buffer.from('MPF\0MPFSECRET', 'latin1'));
+  const adobe = seg(0xee, Buffer.from('Adobe\0\x64\0\0\0\0\x01', 'latin1'));
+  const r = cleanPhoto(jpeg(APP0, c2pa, APP2(), ducky, mpf, adobe, DQT), 'jpg');
+  assert.deepEqual(r.data, jpeg(APP0, APP2(), adobe, DQT));
+  assert.deepEqual(r.removed, ['other']);
+});
+
+test('cleanPhoto: a fill byte before a marker does not make the picture unreadable', () => {
+  const data = Buffer.concat([SOI, APP0, Buffer.from([0xff]), exif('II', { gps: true }), Buffer.from([0xff, 0xff]), DQT, SOS_TAIL]);
+  const r = cleanPhoto(data, 'jpg');
+  assert.deepEqual(r.data, jpeg(APP0, DQT));
+  assert.deepEqual(r.removed, ['location', 'exif']);
+});
+
+test('cleanPhoto: an Exif with only the Orientation tag but extra bytes inside is rebuilt, not kept', () => {
+  const padded = seg(0xe1, Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff('MM', { orientation: 6 }), Buffer.from('PADSECRET')]));
+  const r = cleanPhoto(jpeg(APP0, padded, DQT), 'jpg');
+  assert.equal(countOf(r.data, 'PADSECRET'), 0);
+  assert.equal(orientationOf(r.data), 6);
+  assert.deepEqual(r.removed, ['exif']);
+});
+
+test('cleanPhoto: the end of the picture is found past restart markers, stuffed bytes and a second scan', () => {
+  const picture = Buffer.concat([
+    SOI, APP0, DQT, seg(0xda, sosHead), Buffer.from([0x11, 0xff, 0x00, 0x22, 0xff, 0xd0, 0x33]),
+    seg(0xc4, Buffer.alloc(5, 1)), seg(0xda, sosHead), Buffer.from([0x44, 0xff, 0xff, 0xd9]),
+  ]);
+  const r = cleanPhoto(Buffer.concat([picture, Buffer.from('TRAILER')]), 'jpg');
+  assert.deepEqual(r.data, picture);
+  assert.deepEqual(r.removed, ['extra']);
+});
+
+test('cleanPhoto: png chunks a picture does not need (C2PA, private ones) are dropped as other', () => {
+  const r = cleanPhoto(png(IHDR, PHYS, chunk('caBX', Buffer.from('C2PASECRET')), chunk('prVt', Buffer.from('PRIVATE')), IDAT, IEND), 'png');
+  assert.deepEqual(r.data, png(IHDR, PHYS, IDAT, IEND));
+  assert.deepEqual(r.removed, ['other']);
+});
