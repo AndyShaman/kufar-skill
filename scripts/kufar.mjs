@@ -83,7 +83,8 @@ function parseParams(list) {
 const PAGE_OPTIONS = { limit: { type: 'string' }, offset: { type: 'string' } };
 const page = (v) => ({ limit: num(v.limit, '--limit'), offset: num(v.offset, '--offset') });
 
-// one fixed hint for every bad login argument: an agent that wrote `login <key>` must not get the key back
+// one fixed hint for every parse error of login: an agent that wrote `login <key>` must not get the key back
+// (a bad --phone or --code value has its own message, which does not repeat the value)
 const loginHint = () => new KufarError('BAD_ARGS',
   'login: без опций, --wait SEC, --phone НОМЕР, --code КОД или --token-stdin; ключ аргументом не передаётся');
 const LOGIN_OPTIONS = { wait: { type: 'string' }, phone: { type: 'string' }, code: { type: 'string' }, 'token-stdin': { type: 'boolean' } };
