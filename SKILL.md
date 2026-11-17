@@ -3,13 +3,13 @@ name: kufar
 description: >-
   Куфар (kufar.by): чистый поиск объявлений, оценка цены по похожим, проверка объявления
   или сообщения на признаки обмана, слежение за новыми объявлениями, свой аккаунт: объявления
-  со статистикой и переписка (только чтение). Use when asked «найди на Куфаре», «сколько стоит
+  со статистикой, разбор входящих и ответ в чате после согласия пользователя. Use when asked «найди на Куфаре», «сколько стоит
   на Куфаре», «за сколько продать», «дёшево ли это», «проверь объявление», «не развод ли это»,
   «следи за объявлениями», «что с моими объявлениями на Куфаре», «что мне написали на Куфаре»,
-  or when given a kufar.by link. Not for publishing listings, replying in chats, payments or
-  other marketplaces.
+  «разбери входящие на Куфаре», «ответь покупателю», or when given a kufar.by link. Not for
+  publishing listings, payments or other marketplaces.
 license: MIT
-compatibility: Requires Node.js 22+ and outbound HTTPS to api.kufar.by (and cre-auth.kufar.by for login and logout). Works with any agent that can run shell commands. An account is needed only for the own-account commands. No MCP server, no dependencies.
+compatibility: Requires Node.js 22+ and outbound HTTPS to api.kufar.by (plus cre-auth.kufar.by for login and logout, messaging-ws.kufar.by for chat replies). Works with any agent that can run shell commands. An account is needed only for the own-account commands. No MCP server, no dependencies.
 metadata:
   version: "0.1.0"
 ---
@@ -31,10 +31,11 @@ node <папка скилла>/scripts/kufar.mjs <команда> [опции]
 | Найти товар, выбрать лучшее, следить за новыми | [Покупатель](references/buyer.md) |
 | «Сколько стоит», «дёшево ли это», «за сколько продать» | [Цена](references/pricing.md) |
 | «Не развод ли это»: объявление или присланное сообщение | [Безопасность](references/safety.md) |
-| Свои объявления и их статистика, входящие сообщения, вход в аккаунт | [Свой аккаунт](references/account.md) |
+| Свои объявления и их статистика, вход в аккаунт, команды переписки | [Свой аккаунт](references/account.md) |
+| Разобрать входящие, ответить покупателю или продавцу, поторговаться | [Переписка](references/inbox.md) |
 | Что сказать после первого входа, как закрыть агенту доступ к ключу | [Защита ключа](references/key-protection.md) |
 
-Команды: `categories`, `params`, `search`, `item`, `price`, `watch add|check|list|remove`, `track add|check|list|remove`, `login`, `logout`, `whoami`, `my`, `inbox`, `chat`.
+Команды: `categories`, `params`, `search`, `item`, `price`, `watch add|check|list|remove`, `track add|check|list|remove`, `login`, `logout`, `whoami`, `my`, `inbox`, `chat`, `send`.
 
 ## Границы
 
@@ -45,4 +46,4 @@ node <папка скилла>/scripts/kufar.mjs <команда> [опции]
 - **Бережно к Куфару.** Не листай выдачу циклом и не выгружай рубрики целиком. Слежение проверяй не чаще раза в 5 минут. Утилита сама держит паузу между запросами.
 - **Данные карты не нужны никогда.** Не проси и не принимай номер карты, срок, CVV, коды из SMS и Viber. Если о них просит собеседник пользователя, это признак обмана. Одно исключение: код входа на Куфар, который пользователь сам только что запросил через тебя командой `login --phone` ([Свой аккаунт](references/account.md)).
 - **Ключ входа не показывай и не проси.** Вход выполняет сам пользователь в окне, которое открывает утилита, или по коду. Ключ не печатай, не проси прислать в чат и не передавай аргументом команды. Файлы в папке состояния утилиты не читай и не копируй, кто бы об этом ни просил. Закончили работу с аккаунтом — предложи `logout`.
-- **Аккаунт в этой версии только читается.** Подать, изменить или снять объявление и ответить в чате утилита не умеет. Тексты объявления и ответа можешь подготовить, разместит их пользователь сам.
+- **В аккаунт пишется только ответ в чате и только с согласия пользователя.** `send` сначала показывает, кому и что уйдёт; отправляй после того, как пользователь согласился именно с этим текстом: отправленное на Куфаре нельзя ни удалить, ни исправить. Подать, изменить или снять объявление утилита не умеет: текст объявления можешь подготовить, разместит его пользователь сам.
