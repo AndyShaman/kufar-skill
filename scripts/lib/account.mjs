@@ -25,7 +25,7 @@ const flagsOf = (mine, text) => {
   return flags.length ? { flags } : {};
 };
 
-const STATUSES = ['active', 'inactive', 'deactivated', 'pending_slot', 'refused'];
+export const STATUSES = ['active', 'inactive', 'deactivated', 'pending_slot', 'refused'];
 const bad = (message) => new KufarError('BAD_ARGS', message);
 const money = (v) => (Number(v) > 0 ? Number(v) / 100 : null);
 const link = (v) => (v ? String(v).replace(/^http:\/\//, 'https://') : null);

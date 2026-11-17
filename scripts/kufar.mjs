@@ -15,7 +15,7 @@ import {
 import { saveToken, loadToken, authStatus, logout, sweepIdleKey, idleError } from './lib/auth.mjs';
 import { startLogin, runLoginWorker, loginWindowStatus, stopLoginWindow, sweepLoginProfiles } from './lib/browser.mjs';
 import { requestCode, confirmCode } from './lib/codelogin.mjs';
-import { myListings, inbox, chat, sendTarget, newDialogTarget } from './lib/account.mjs';
+import { myListings, inbox, chat, sendTarget, newDialogTarget, STATUSES } from './lib/account.mjs';
 import { checkText, hasKey, confirmCode as previewCode, sendMessage, styleFlags } from './lib/chatsend.mjs';
 import { UUID_RE } from './lib/transport.mjs';
 import { resolveForm, findFormValues, typeField } from './lib/form.mjs';
@@ -124,16 +124,10 @@ async function login(args) {
     return status;
   }
   if (v.phone === undefined && v.code === undefined) return startLogin({ stateDir, waitMs: wait * 1000 });
-  try {
-    if (v.phone !== undefined) return await requestCode({ stateDir, phone: v.phone });
-    const status = await confirmCode({ stateDir, code: v.code });
-    await clearLoginWindow(stateDir);
-    return status;
-  } catch (e) {
-    // only a bad phone or code is BAD_ARGS here
-    if (e.code === 'BAD_ARGS') throw loginHint();
-    throw e;
-  }
+  if (v.phone !== undefined) return await requestCode({ stateDir, phone: v.phone });
+  const status = await confirmCode({ stateDir, code: v.code });
+  await clearLoginWindow(stateDir);
+  return status;
 }
 
 // hidden command: holds the login window; prints nothing and always exits 0
@@ -301,9 +295,18 @@ async function readDraft(file) {
   return draft;
 }
 
+// a listing of the user to take contacts from: active ones first, then the other statuses
+async function anyListing(transport) {
+  for (const status of STATUSES) {
+    const items = await transport.getJson('/my-items-v2/v2/items', { status, limit: 1, offset: 0, stats: 1 });
+    if (items?.ads?.[0]) return items.ads[0];
+  }
+  return undefined;
+}
+
 function previewField(field, value) {
   const label = (x) => field.values?.find((y) => y.value === x)?.label ?? x;
-  const text = field.kind === 'flag' ? 'да' : Array.isArray(value) ? value.map(label).join(', ') : label(value);
+  const text = field.kind === 'flag' ? (value === '1' ? 'да' : 'нет') : Array.isArray(value) ? value.map(label).join(', ') : label(value);
   return { name: field.name, label: field.label, value, text };
 }
 
@@ -323,8 +326,7 @@ async function post(args) {
 
   const contact = { name: draft.name, phone: draft.phone, email: draft.email };
   if (Object.values(contact).includes(undefined)) {
-    const items = await ctx.transport.getJson('/my-items-v2/v2/items', { status: 'active', limit: 1, offset: 0, stats: 1 });
-    const first = items?.ads?.[0];
+    const first = await anyListing(ctx.transport);
     for (const k of Object.keys(contact)) {
       if (contact[k] === undefined && typeof first?.[k] === 'string' && first[k]) contact[k] = first[k];
     }
@@ -399,8 +401,7 @@ async function edit(args) {
 
   let { email } = changes;
   if (email === undefined) {
-    const items = await ctx.transport.getJson('/my-items-v2/v2/items', { status: 'active', limit: 1, offset: 0, stats: 1 });
-    email = items?.ads?.[0]?.email;
+    email = (await anyListing(ctx.transport))?.email;
   }
 
   const { ad, photos: list, changed } = buildEdit({ saved, changes, fields, savedFields, type: typeField(bootstrap, values), email });

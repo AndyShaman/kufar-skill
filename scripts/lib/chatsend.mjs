@@ -75,7 +75,7 @@ export async function sendMessage({ token, conversationId, adId, text, WebSocket
     let sent = false;
     let done = false;
     const unconfirmed = () => new KufarError('SEND_UNCONFIRMED',
-      'Куфар не подтвердил отправку. Сообщение могло уйти: проверьте chat, прежде чем отправлять снова');
+      `Куфар не подтвердил отправку. Сообщение могло уйти: проверьте ${adId === undefined ? 'chat' : 'inbox'}, прежде чем отправлять снова`);
 
     const finish = (settle, value) => {
       if (done) return;

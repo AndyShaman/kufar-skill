@@ -34,7 +34,8 @@ export function kopecks(price) {
 
 // the value that goes into the ad, or { error }; undefined for a flag that is off
 export function fieldValue(field, raw) {
-  const v = typeof raw === 'string' ? raw.trim() : raw;
+  let v = typeof raw === 'string' ? raw.trim() : raw;
+  if (field.kind === 'number' && Number.isFinite(v)) v = String(v);
   switch (field.kind) {
     case 'flag':
       if (v === '1' || v === true) return '1';

@@ -93,7 +93,8 @@ export function buildEdit({ saved, changes, fields, savedFields, type, email }) 
   const changed = [];
   for (const f of own) {
     const from = meaning(f, norm(saved[f.name], f));
-    const to = ad[f.name] ?? null;
+    // a flag kept as "0" is a flag that is off
+    const to = f.kind === 'flag' && ad[f.name] === '0' ? null : ad[f.name] ?? null;
     if (!same(from, to)) changed.push({ name: f.name, from, to });
   }
   for (const f of savedFields) {

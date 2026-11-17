@@ -24,12 +24,15 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
     if (!by?.length && !query) {
       throw new KufarError('NEEDS_BY', 'Укажите --by: по каким характеристикам искать похожие (или --query)', { available });
     }
+    const own = params;
     params = {};
     for (const code of by ?? []) {
       const p = Object.values(subjectAd.params).find((x) => x.filter === code);
       if (!p) throw new KufarError('BAD_ARGS', `У объявления нет характеристики ${code}`, { by: code, available });
       params[code] = p.value;
     }
+    // what the user asked for on top of the listing's own characteristics wins
+    params = { ...params, ...own };
   }
   if (!cat) throw new KufarError('BAD_ARGS', 'Нужна рубрика (--cat) или объявление (--like)');
   const byWords = Object.keys(params).length === 0;
