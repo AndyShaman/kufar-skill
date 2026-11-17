@@ -598,14 +598,14 @@ const targetReply = (over = {}) => ({ conversation_info: conv(), messages: [msg(
 
 test('sendTarget: one request with the path and limit 1, offset 0', async () => {
   const t = chatTransport({ reply: targetReply() });
-  await acct.acct.sendTarget(t, CONV_ID);
+  await acct.sendTarget(t, CONV_ID);
   assert.equal(t.calls.length, 1);
   assert.equal(t.calls[0].path, msgsPath(CONV_ID));
   assert.deepEqual(t.calls[0].query, { limit: 1, offset: 0 });
 });
 
 test('sendTarget: result is conversation_id, to and ad from the normalized conversation', async () => {
-  const r = await acct.acct.sendTarget(chatTransport({ reply: targetReply() }), CONV_ID);
+  const r = await acct.sendTarget(chatTransport({ reply: targetReply() }), CONV_ID);
   const n = normalizeConversation(CONV_RAW);
   assert.deepEqual(r, { conversation_id: CONV_ID, to: n.with, ad: n.ad });
   assert.deepEqual(Object.keys(r), ['conversation_id', 'to', 'ad']);
@@ -613,7 +613,7 @@ test('sendTarget: result is conversation_id, to and ad from the normalized conve
 
 test('sendTarget: the id given is returned as given', async () => {
   const id = 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE';
-  const r = await acct.acct.sendTarget(chatTransport({ reply: targetReply() }), id);
+  const r = await acct.sendTarget(chatTransport({ reply: targetReply() }), id);
   assert.equal(r.conversation_id, id);
 });
 
