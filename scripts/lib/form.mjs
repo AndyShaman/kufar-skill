@@ -6,6 +6,7 @@ const SKIP = new Set(['parent_category', 'category', 'currency', 'halva', 'name'
 const SKIP_PREFIX = ['halva_', 'egr_', 'commercial_register_', 'domestic_register_'];
 const CHOICE_UI = new Set(['select', 'select_chips', 'select_search', 'radio_button']);
 const MAX_VALUES = 40;
+const SUBJECT_MAX = 50;
 
 const isObject = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
@@ -36,6 +37,8 @@ function shape(ref, more, full) {
     const len = ref.actions?.find((a) => a.name === 'v_length')?.args;
     if (typeof len?.min === 'number') field.min = len.min;
     if (typeof len?.max === 'number') field.max = len.max;
+    // Kufar cuts a published title at 50 characters, though its form description allows 100
+    if (ref.name === 'subject') field.max = Math.min(field.max ?? SUBJECT_MAX, SUBJECT_MAX);
   }
   if (more.has(ref.name)) field.more = true;
   return field;
