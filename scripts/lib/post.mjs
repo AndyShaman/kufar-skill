@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { KufarError } from './errors.mjs';
 import { readJson, writeJsonAtomic } from './storage.mjs';
 import { VERSION } from './transport.mjs';
+import { cleanPhoto, convertHeic as sipsToJpeg } from './photo.mjs';
 
 const UPLOAD_URL = 'https://ads-image-uploader.kufar.by/v1/images';
 const INSERT_URL = 'https://api.kufar.by/insertion/v1/processing/insert';
@@ -121,20 +122,26 @@ export function maskContact({ name, phone, email }) {
   return { name, phone: `…${phone.replace(/\D/g, '').slice(-4)}`, email: maskEmail(email) };
 }
 
-export async function photoInfo(files) {
+// the photos as they go to Kufar: cleaned of hidden data, HEIC turned into JPEG on macOS
+export async function photoInfo(files, { platform = process.platform, convertHeic = sipsToJpeg } = {}) {
   const out = [];
   for (const [index, file] of files.entries()) {
     const badFile = () => new KufarError('DRAFT_INVALID', 'В черновике ошибки', { fields: { photos: 'bad_file' }, index });
     const ext = path.extname(file).slice(1).toLowerCase();
-    if (!['jpg', 'jpeg', 'png'].includes(ext)) throw badFile();
-    let data;
+    const heic = ext === 'heic' || ext === 'heif';
+    if (heic && platform !== 'darwin') throw new KufarError('DRAFT_INVALID', 'В черновике ошибки', { fields: { photos: 'heic' }, index });
+    if (!heic && !['jpg', 'jpeg', 'png'].includes(ext)) throw badFile();
+    let raw;
     try {
-      data = await fs.readFile(file);
+      raw = heic ? await convertHeic(file) : await fs.readFile(file);
     } catch {
       throw badFile();
     }
+    const cleaned = cleanPhoto(raw, heic ? 'jpg' : ext);
+    if (!cleaned) throw badFile();
+    const { data, removed } = cleaned;
     if (data.length <= MIN_PHOTO || data.length > MAX_PHOTO) throw badFile();
-    out.push({ file, ext, bytes: data.length, sha256: sha256(data), data });
+    out.push({ file, ext: heic ? 'jpg' : ext, bytes: data.length, sha256: sha256(data), data, removed: heic ? ['heic', ...removed] : removed });
   }
   return out;
 }

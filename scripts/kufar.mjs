@@ -4,11 +4,12 @@ import { parseArgs } from 'node:util';
 import { KufarError } from './lib/errors.mjs';
 import { resolveStateDir, cached } from './lib/storage.mjs';
 import { createTransport } from './lib/transport.mjs';
-import { fetchAd } from './lib/ads.mjs';
+import { fetchAd, parseAdRef } from './lib/ads.mjs';
 import { findCategories, flattenCategories, parentOf, listParams, findParamValues } from './lib/taxonomy.mjs';
 import { buildSearchQuery, search, flagAds } from './lib/search.mjs';
 import { loadClock } from './lib/clock.mjs';
 import { estimatePrice } from './lib/price.mjs';
+import { compare, compareBest } from './lib/compare.mjs';
 import {
   watchAdd, watchCheck, watchList, watchRemove, trackAdd, trackCheck, trackList, trackRemove,
 } from './lib/watch.mjs';
@@ -47,6 +48,15 @@ const PRICE_OPTIONS = {
   by: { type: 'string' },
   exclude: { type: 'string' },
   include: { type: 'string' },
+};
+const COMPARE_OPTIONS = {
+  cat: { type: 'string' },
+  query: { type: 'string' },
+  param: { type: 'string', multiple: true },
+  region: { type: 'string', multiple: true },
+  exclude: { type: 'string' },
+  include: { type: 'string' },
+  top: { type: 'string' },
 };
 
 function parse(args, options, positionals = 0) {
@@ -225,6 +235,35 @@ async function send(args) {
   return { sent: true, conversation_id: id, to: target.to, message_id, at };
 }
 
+// 2 to 5 listings given by the user, or the best ones of a price group found by the utility itself
+async function compareCmd(args) {
+  let r;
+  try {
+    r = parseArgs({ args, options: COMPARE_OPTIONS, allowPositionals: true, strict: true });
+  } catch (e) {
+    throw bad(`Неверные аргументы: ${e.message}`);
+  }
+  const { values: v, positionals: refs } = r;
+  const group = Object.keys(v).some((k) => k !== 'top');
+  if (refs.length) {
+    if (group || v.top !== undefined) throw bad('compare: либо объявления, либо условия поиска (--cat …), не вместе');
+    const ids = refs.map(parseAdRef);
+    if (ids.length < 2 || ids.length > 5) throw bad('compare: нужно от 2 до 5 объявлений', { count: ids.length });
+    if (new Set(ids).size !== ids.length) throw bad('compare: одно объявление указано дважды');
+    const ctx = await getClockCtx();
+    const res = await compare(ctx.transport, ids);
+    return { ...res, ads: flagAds(res.ads, ctx.now(), ctx.clock) };
+  }
+  if (!group) throw bad('compare: нужны 2–5 объявлений или условия поиска (--cat …)');
+  if (v.top !== undefined && !/^[2-5]$/.test(v.top)) throw bad('--top: число от 2 до 5', { top: v.top });
+  const opts = {
+    cat: v.cat, params: parseParams(v.param), query: v.query, regions: v.region, exclude: csv(v.exclude), include: csv(v.include),
+  };
+  const ctx = await getClockCtx();
+  const res = await compareBest(ctx.transport, opts, { top: v.top === undefined ? 3 : Number(v.top), now: ctx.now, clock: ctx.clock });
+  return { ...res, ads: flagAds(res.ads, ctx.now(), ctx.clock) };
+}
+
 const categoryTree = (ctx) => cached(path.join(ctx.stateDir, 'cache', 'category-tree.json'), DAY,
   () => ctx.transport.getJson('/category-tree/v1/category_tree'));
 
@@ -351,7 +390,7 @@ async function post(args) {
         body: ad.body,
         price_byn: Number(ad.price) / 100,
         fields: shown.map((f) => previewField(f, ad[f.name])),
-        photos: photos.map((p) => ({ file: p.file, bytes: p.bytes })),
+        photos: photos.map((p) => ({ file: p.file, bytes: p.bytes, removed: p.removed })),
         contact: maskContact(ad),
         terms: TERMS,
       },
@@ -443,7 +482,7 @@ async function edit(args) {
         ...(ad.currency === 'BYR' && ad.price !== undefined ? { price_byn: Number(ad.price) / 100 } : {}),
         photos: photos.map((p) => (p.path
           ? { current: images.findIndex((x) => x.path === p.path) + 1, url: `https://rms.kufar.by/v1/gallery/${p.path}` }
-          : { file: p.file, bytes: p.bytes })),
+          : { file: p.file, bytes: p.bytes, removed: p.removed })),
         email: maskEmail(ad.email),
       },
       confirm: code,
@@ -548,6 +587,8 @@ async function run(argv) {
       const ctx = await getClockCtx();
       return estimatePrice(ctx.transport, { ...opts, now: ctx.now, clock: ctx.clock });
     }
+    case 'compare':
+      return compareCmd(rest);
     case 'watch': {
       const [sub, ...args] = rest;
       if (sub === 'add') {
@@ -616,7 +657,7 @@ async function run(argv) {
     case 'manage':
       return manage(rest);
     default:
-      throw bad('Команды: categories, params, search, item, price, form, post, edit, manage, watch, track, login, logout, whoami, my, inbox, chat, send',
+      throw bad('Команды: categories, params, search, item, price, compare, form, post, edit, manage, watch, track, login, logout, whoami, my, inbox, chat, send',
         { command: cmd ?? null });
   }
 }
