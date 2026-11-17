@@ -1325,3 +1325,13 @@ for (const [name, args] of [
     assert.notEqual(r.json.error.details?.command, 'compare', `compare is an unknown command: ${r.stdout}`);
   });
 }
+
+test('kufar compare: two cards of one seller with the same title and price are flagged each on its own, as item does', async () => {
+  const twin = (id) => ({ ...rawAdOf({ id, price: 300, title: 'Телефон один' }), account_id: 'acc-same' });
+  const raw = { 1000000001: twin(1000000001), 1000000003: twin(1000000003) };
+  const r = await runFake(() => ['compare', '1000000001', '1000000003'], { raw });
+  assert.equal(r.status, 0, r.stdout);
+  const item = await runFake(() => ['item', '1000000003'], { raw });
+  assert.deepEqual(r.json.ads[1], item.json.ad);
+  assert.ok(!r.json.ads[1].flags.includes('duplicate'), r.stdout);
+});
