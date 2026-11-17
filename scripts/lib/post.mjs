@@ -7,7 +7,7 @@ import { VERSION } from './transport.mjs';
 
 const UPLOAD_URL = 'https://ads-image-uploader.kufar.by/v1/images';
 const INSERT_URL = 'https://api.kufar.by/insertion/v1/processing/insert';
-const SEGMENTATION = 'routing=web_ad_insertion;application=ad_insertion;platform=web;taxonomy-version=2';
+export const SEGMENTATION = 'routing=web_ad_insertion;application=ad_insertion;platform=web;taxonomy-version=2';
 const DAY = 24 * 60 * 60 * 1000;
 const MIN_PHOTO = 10240;
 const MAX_PHOTO = 10485760;
@@ -22,10 +22,10 @@ const FIXED = {
   delivery_enabled: '0', safedeal_enabled: '0',
 };
 
-const sha256 = (data) => createHash('sha256').update(data).digest('hex');
+export const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 const isStrings = (x) => Array.isArray(x) && x.every((v) => typeof v === 'string');
 
-function kopecks(price) {
+export function kopecks(price) {
   const m = PRICE.exec(typeof price === 'number' ? String(price) : typeof price === 'string' ? price : '');
   if (!m) return null;
   const k = Number(m[1]) * 100 + Number((m[2] ?? '').padEnd(2, '0'));
@@ -33,7 +33,7 @@ function kopecks(price) {
 }
 
 // the value that goes into the ad, or { error }; undefined for a flag that is off
-function fieldValue(field, raw) {
+export function fieldValue(field, raw) {
   const v = typeof raw === 'string' ? raw.trim() : raw;
   switch (field.kind) {
     case 'flag':
@@ -99,8 +99,10 @@ export function buildAd({ draft, fields, type, contact }) {
   return { ad, photos: draft.photos ?? [] };
 }
 
+export const maskEmail = (email) => `${email[0]}…${email.slice(email.indexOf('@'))}`;
+
 export function maskContact({ name, phone, email }) {
-  return { name, phone: `…${phone.replace(/\D/g, '').slice(-4)}`, email: `${email[0]}…${email.slice(email.indexOf('@'))}` };
+  return { name, phone: `…${phone.replace(/\D/g, '').slice(-4)}`, email: maskEmail(email) };
 }
 
 export async function photoInfo(files) {
@@ -126,13 +128,13 @@ export function postCode(ad, photos) {
   return sha256(JSON.stringify([pairs, photos.map((p) => p.sha256)])).slice(0, 12);
 }
 
-// one POST with the key; the exception text may repeat the headers, so it is never passed on
-async function call(fetchImpl, url, { token, headers = {}, body, timeoutMs }) {
+// one request with the key; the exception text may repeat the headers, so it is never passed on
+export async function call(fetchImpl, url, { method = 'POST', token, headers = {}, body, timeoutMs }) {
   let res;
   let text;
   try {
     res = await fetchImpl(url, {
-      method: 'POST',
+      method,
       headers: { 'User-Agent': `kufar-skill/${VERSION}`, Authorization: `Bearer ${token}`, ...headers },
       body,
       redirect: 'manual',
@@ -161,6 +163,13 @@ export async function uploadPhoto({ token, data, ext, fetchImpl = globalThis.fet
   return answer.path;
 }
 
+// the field messages of a 422 answer
+export function refusedFields(data) {
+  const fields = Object.entries(data?.details?.fields ?? {}).slice(0, 30)
+    .map(([k, v]) => [k, String(v?.translations?.ru ?? v?.message ?? '').slice(0, 200)]);
+  return Object.fromEntries(fields);
+}
+
 const unconfirmed = () => new KufarError('POST_UNCONFIRMED', 'Куфар не подтвердил подачу. Объявление могло появиться: '
   + 'проверьте my, my --status inactive и my --status pending_slot, прежде чем подавать снова');
 
@@ -178,11 +187,7 @@ export async function insertAd({ token, ad, fetchImpl = globalThis.fetch, timeou
   }
   const { status, data } = r;
   if (status === 200 && Number.isInteger(data?.ad_id)) return { ad_id: String(data.ad_id), pending_slot: data.pending_slot === true };
-  if (status === 422) {
-    const fields = Object.entries(data?.details?.fields ?? {}).slice(0, 30)
-      .map(([k, v]) => [k, String(v?.translations?.ru ?? v?.message ?? '').slice(0, 200)]);
-    throw new KufarError('POST_REFUSED', 'Куфар не принял объявление', { fields: Object.fromEntries(fields) });
-  }
+  if (status === 422) throw new KufarError('POST_REFUSED', 'Куфар не принял объявление', { fields: refusedFields(data) });
   // 401 too: it is not yet known that the key alone is enough to post, so no new login is asked for
   if (status >= 400 && status < 500) throw new KufarError('POST_FAILED', 'Куфар отказал в подаче', { status });
   throw unconfirmed();

@@ -19,7 +19,8 @@ import { myListings, inbox, chat, sendTarget } from './lib/account.mjs';
 import { checkText, hasKey, confirmCode as previewCode, sendMessage } from './lib/chatsend.mjs';
 import { UUID_RE } from './lib/transport.mjs';
 import { resolveForm, findFormValues, typeField } from './lib/form.mjs';
-import { SERVICE_KEYS, buildAd, maskContact, photoInfo, postCode, submitAd } from './lib/post.mjs';
+import { SERVICE_KEYS, buildAd, maskContact, maskEmail, photoInfo, postCode, submitAd } from './lib/post.mjs';
+import { editSupport, editUnsupported, buildEdit, editCode, submitEdit } from './lib/edit.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const bad = (message, details) => new KufarError('BAD_ARGS', message, details);
@@ -332,6 +333,97 @@ async function post(args) {
   return { posted: true, ad_id: r.ad_id, pending_slot: r.pending_slot, note: r.pending_slot ? PENDING_NOTE : POST_NOTE };
 }
 
+const EDIT_NEXT = 'Покажите пользователю, что изменится. После его согласия повторите команду с тем же файлом и --confirm <код>';
+const EDIT_NOTE = 'Куфар принял правку. Изменения проверяет модератор, до конца проверки покупатели видят прежнюю версию. '
+  + 'Сверьте позже командой item';
+const isObject = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const trimmed = (obj) => Object.fromEntries(Object.entries(obj).filter(([, x]) => typeof x === 'string').map(([k, x]) => [k, x.trim()]));
+
+async function edit(args) {
+  const { values: v, arg: id } = parse(args, { changes: { type: 'string' }, confirm: { type: 'string' } }, 1);
+  if (!/^\d+$/.test(id)) throw bad('Нужен номер своего объявления (id из my)');
+  if (v.changes === undefined) throw bad('Нужен файл изменений: --changes <файл.json>');
+  if (v.confirm !== undefined && !/^[0-9a-f]{12}$/.test(v.confirm)) throw bad('--confirm: код из 12 знаков 0-9a-f из предпросмотра');
+  let changes;
+  try {
+    changes = JSON.parse(await fs.readFile(v.changes, 'utf8'));
+  } catch { /* the text of the file is not repeated */ }
+  if (!isObject(changes) || !Object.keys(changes).length) throw bad('Изменения: файл JSON с одним непустым объектом');
+  const ctx = getCtx();
+  const token = await ctx.getToken();
+
+  const saved = (await ctx.transport.getJson(`/insertion/v1/processing/load/${id}`))?.result;
+  if (!isObject(saved) || typeof saved.category !== 'string' || !/^\d+$/.test(saved.category)) {
+    throw new KufarError('BAD_RESPONSE', 'Куфар вернул объявление в неожиданном виде');
+  }
+  const reason = editSupport(saved);
+  if (reason) throw editUnsupported({ reason });
+
+  const tree = await categoryTree(ctx);
+  const bootstrap = await formBootstrap(ctx, tree, saved.category);
+  const fixed = { category: saved.category, company_ad: '0' };
+  const savedValues = { ...trimmed(saved), ...fixed };
+  const values = { ...trimmed(saved), ...trimmed(changes), ...fixed };
+  const fields = resolveForm(bootstrap, values, { full: true });
+  const savedFields = resolveForm(bootstrap, savedValues, { full: true });
+
+  let { email } = changes;
+  if (email === undefined) {
+    const items = await ctx.transport.getJson('/my-items-v2/v2/items', { status: 'active', limit: 1, offset: 0, stats: 1 });
+    email = items?.ads?.[0]?.email;
+  }
+
+  const { ad, photos: list, changed } = buildEdit({ saved, changes, fields, savedFields, type: typeField(bootstrap, values), email });
+  if (Object.values(ad).flat().some((x) => typeof x === 'string' && hasKey(x, token))) {
+    throw new KufarError('TEXT_HAS_KEY', 'В объявлении есть ключ входа. Такое объявление утилита не подаёт');
+  }
+  // photoInfo counts only the new files; the index in its error is the place in the changes file
+  const at = list.flatMap((p, i) => (p.file ? [i] : []));
+  let info;
+  try {
+    info = await photoInfo(at.map((i) => list[i].file));
+  } catch (e) {
+    if (e.code === 'DRAFT_INVALID') e.details.index = at[e.details.index];
+    throw e;
+  }
+  const photos = list.map((p, i) => (p.file ? info[at.indexOf(i)] : p));
+  const code = editCode(id, ad, photos.map((p) => p.path ?? p.sha256));
+
+  if (v.confirm === undefined) {
+    const images = (Array.isArray(saved.images) ? saved.images : []).filter((i) => typeof i?.path === 'string');
+    const all = [...fields, ...savedFields];
+    const shown = (f, x) => (x === null ? null : previewField(f, x).text);
+    const rubles = (x) => (x === null ? null : Number(x) / 100);
+    return {
+      edited: false,
+      preview: {
+        id,
+        category: { id: ad.category, name: flattenCategories(tree).find((c) => c.id === ad.category)?.name },
+        changes: changed.map((c) => {
+          if (c.name === 'price') return { name: c.name, label: 'Цена', from: rubles(c.from), to: rubles(c.to) };
+          if (c.name === 'photos') return { name: c.name, label: 'Фото', from: c.from, to: c.to };
+          const f = all.find((x) => x.name === c.name);
+          return { name: c.name, label: f.label, from: shown(f, c.from), to: shown(f, c.to) };
+        }),
+        subject: ad.subject,
+        body: ad.body,
+        ...(ad.currency === 'BYR' && ad.price !== undefined ? { price_byn: Number(ad.price) / 100 } : {}),
+        photos: photos.map((p) => (p.path
+          ? { current: images.findIndex((x) => x.path === p.path) + 1, url: `https://rms.kufar.by/v1/gallery/${p.path}` }
+          : { file: p.file, bytes: p.bytes })),
+        email: maskEmail(ad.email),
+      },
+      confirm: code,
+      next: EDIT_NEXT,
+    };
+  }
+  if (v.confirm !== code) {
+    throw new KufarError('CONFIRM_MISMATCH', 'Правка или фото не совпадают с предпросмотром. Покажите пользователю новый предпросмотр');
+  }
+  await submitEdit({ token, id, ad, photos });
+  return { edited: true, id, note: EDIT_NOTE };
+}
+
 async function run(argv) {
   const [cmd, ...rest] = argv;
   // logout revokes the key on Kufar itself, an idle one included
@@ -443,8 +535,10 @@ async function run(argv) {
       return form(rest);
     case 'post':
       return post(rest);
+    case 'edit':
+      return edit(rest);
     default:
-      throw bad('Команды: categories, params, search, item, price, form, post, watch, track, login, logout, whoami, my, inbox, chat, send',
+      throw bad('Команды: categories, params, search, item, price, form, post, edit, watch, track, login, logout, whoami, my, inbox, chat, send',
         { command: cmd ?? null });
   }
 }

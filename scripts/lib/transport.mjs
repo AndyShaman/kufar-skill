@@ -19,6 +19,7 @@ const OPEN = [
 const UNDER_LOGIN = [
   /^\/my-items-v2\/v1\/items\/count$/,
   /^\/my-items-v2\/v2\/items$/,
+  /^\/insertion\/v1\/processing\/load\/\d+$/,
   /^\/messaging-api\/v1\/counter$/,
   /^\/messaging-api\/v4\/conversations$/,
   new RegExp(`^/messaging-api/v4/conversations/${UUID}/messages$`),
