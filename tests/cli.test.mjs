@@ -855,3 +855,89 @@ test('unknown command message names post', async () => {
   assert.equal(r.json.error.code, 'BAD_ARGS');
   assert.match(r.json.error.message, /\bpost\b/);
 });
+
+// ---- step 3e: edit, only the cases that end before the first request ----
+
+const EDIT_ID = '1000000001';
+const GOOD_CHANGES = { subject: 'Новое название' };
+const notUnknown = (r) => assert.notEqual(r.json.error.details?.command, 'edit', `edit is an unknown command: ${r.stdout}`);
+
+for (const [args, why] of [
+  [['edit'], 'no id'],
+  [['edit', 'abc'], 'a non-digit id and no --changes'],
+  [['edit', EDIT_ID], 'no --changes'],
+]) {
+  test(`kufar edit: ${why} -> BAD_ARGS, exit code 1`, async () => {
+    const r = await run(args);
+    assert.equal(r.status, 1);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    notUnknown(r);
+  });
+}
+
+test('kufar edit: a non-digit id -> BAD_ARGS', async () => {
+  for (const id of ['abc', '12a', '1.5']) {
+    const r = await run(['edit', id, '--changes', await writeDraft(GOOD_CHANGES)]);
+    assert.equal(r.status, 1);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    notUnknown(r);
+  }
+});
+
+for (const [confirm, why] of [['abc', 'too short'], ['0123456789abc', 'too long'], ['0123456789AB', 'in upper case'], ['0123456789gh', 'with non-hex characters']]) {
+  test(`kufar edit: --confirm ${why} -> BAD_ARGS, exit code 1`, async () => {
+    const r = await run(['edit', EDIT_ID, '--changes', await writeDraft(GOOD_CHANGES), '--confirm', confirm]);
+    assert.equal(r.status, 1);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    notUnknown(r);
+  });
+}
+
+test('kufar edit: a changes file that does not exist -> BAD_ARGS', async () => {
+  const r = await run(['edit', EDIT_ID, '--changes', path.join(await tmpDir(), 'nope.json')]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+  notUnknown(r);
+});
+
+test('kufar edit: a changes file that is not JSON -> BAD_ARGS, the file text is not in the output', async () => {
+  const r = await run(['edit', EDIT_ID, '--changes', await writeDraft('not json FILE-MARK')]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+  notUnknown(r);
+  assert.ok(!r.stdout.includes('FILE-MARK'));
+});
+
+for (const [content, why] of [['[1, 2]', 'a JSON array'], ['"FILE-MARK"', 'a JSON string'], ['null', 'null'], ['{}', 'an empty object']]) {
+  test(`kufar edit: a changes file that is ${why} -> BAD_ARGS`, async () => {
+    const r = await run(['edit', EDIT_ID, '--changes', await writeDraft(content)]);
+    assert.equal(r.status, 1);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    notUnknown(r);
+    assert.ok(!r.stdout.includes('FILE-MARK'));
+  });
+}
+
+test('kufar edit: a valid-looking call without a saved key -> AUTH_REQUIRED, like post', async () => {
+  const r = await run(['edit', EDIT_ID, '--changes', await writeDraft(GOOD_CHANGES)]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'AUTH_REQUIRED', r.stdout);
+  const post = await run(['post', '--draft', await writeDraft(GOOD_DRAFT)]);
+  assert.equal(r.json.error.message, post.json.error.message);
+});
+
+test('kufar edit: with a saved key a BAD_ARGS answer does not show the key', async () => {
+  const dir = await tmpDir();
+  const token = liveToken();
+  runIn(dir, ['login', '--token-stdin'], `${token}\n`);
+  const r = runIn(dir, ['edit', EDIT_ID, '--changes', await writeDraft('{}')]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+  assert.ok(!r.stdout.includes(token));
+});
+
+test('unknown command message names edit', async () => {
+  const r = await run(['bogus']);
+  assert.equal(r.json.error.code, 'BAD_ARGS');
+  assert.match(r.json.error.message, /\bedit\b/);
+});

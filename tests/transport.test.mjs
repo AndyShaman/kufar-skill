@@ -400,3 +400,37 @@ test('fetch TypeError on an open path is still NETWORK', async () => {
   const { transport } = await setupAuth({ responses: [new TypeError('fetch failed')] });
   await rejectsCode(transport.getJson(COUNT), 'NETWORK');
 });
+
+// ---- step 3e: the saved listing is read under login ----
+
+test('the load path of a saved listing is under login: GET with the key', async () => {
+  const { transport, fetches, tokenCalls } = await setupAuth();
+  await transport.getJson('/insertion/v1/processing/load/123');
+  assert.equal(new URL(fetches[0].url).origin, 'https://api.kufar.by');
+  assert.equal(new URL(fetches[0].url).pathname, '/insertion/v1/processing/load/123');
+  assert.equal(authHeader(fetches[0].init), `Bearer ${KEY}`);
+  assert.equal(fetches[0].init.method, 'GET');
+  assert.equal(tokenCalls.length, 1);
+});
+
+test('the load path without getToken is AUTH_REQUIRED and makes no network call', async () => {
+  const { transport, fetches } = await setupAuth({ getToken: null });
+  await rejectsCode(transport.getJson('/insertion/v1/processing/load/123'), 'AUTH_REQUIRED');
+  assert.equal(fetches.length, 0);
+});
+
+test('a load path with non-digits is rejected before fetch and before getToken', async () => {
+  for (const p of [
+    '/insertion/v1/processing/load/12a',
+    '/insertion/v1/processing/load/',
+    '/insertion/v1/processing/load',
+    '/insertion/v1/processing/load/123/x',
+    '/insertion/v1/processing/load/../update/123',
+    '/insertion/v1/processing/update/123',
+  ]) {
+    const { transport, fetches, tokenCalls } = await setupAuth();
+    await rejectsCode(transport.getJson(p), 'PATH_NOT_ALLOWED');
+    assert.equal(fetches.length, 0, p);
+    assert.equal(tokenCalls.length, 0, p);
+  }
+});
