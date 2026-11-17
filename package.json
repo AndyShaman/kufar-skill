@@ -1,0 +1,10 @@
+{
+  "name": "kufar-skill",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent skill for Kufar.by: clean search, price check, watch new listings",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": { "test": "node --test tests/" }
+}
