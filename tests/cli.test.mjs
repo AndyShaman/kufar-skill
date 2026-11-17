@@ -941,3 +941,72 @@ test('unknown command message names edit', async () => {
   assert.equal(r.json.error.code, 'BAD_ARGS');
   assert.match(r.json.error.message, /\bedit\b/);
 });
+
+// ---- step 3f: manage, only the cases that end before the first request ----
+
+const MANAGE_ID = '1000000001';
+const manageNotUnknown = (r) => assert.notEqual(r.json.error.details?.command, 'manage', `manage is an unknown command: ${r.stdout}`);
+
+for (const [args, why] of [
+  [['manage'], 'no action'],
+  [['manage', 'bogus', MANAGE_ID], 'an unknown action'],
+  [['manage', 'off'], 'no id'],
+  [['manage', 'delete', 'abc'], 'a non-digit id'],
+  [['manage', 'prolong', '12a'], 'an id with a letter'],
+  [['manage', 'off', MANAGE_ID], 'off without --reason'],
+  [['manage', 'off', MANAGE_ID, '--reason', 'bored'], 'off with an unknown --reason'],
+  [['manage', 'off', MANAGE_ID, '--reason', 'sold_on_site'], 'sold_on_site without --duration'],
+  [['manage', 'off', MANAGE_ID, '--reason', 'other'], 'other without --comment'],
+  [['manage', 'activate', MANAGE_ID, '--reason', 'give_up'], 'activate with --reason'],
+  [['manage', 'delete', MANAGE_ID, '--comment', 'text'], 'delete with --comment'],
+]) {
+  test(`kufar ${args.join(' ')}: ${why} -> BAD_ARGS, exit code 1`, async () => {
+    const r = await run(args);
+    assert.equal(r.status, 1);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    manageNotUnknown(r);
+  });
+}
+
+for (const [confirm, why] of [['abc', 'too short'], ['0123456789abc', 'too long'], ['0123456789AB', 'in upper case'], ['0123456789gh', 'with non-hex characters']]) {
+  test(`kufar manage: --confirm ${why} -> BAD_ARGS, exit code 1`, async () => {
+    const r = await run(['manage', 'prolong', MANAGE_ID, '--confirm', confirm]);
+    assert.equal(r.status, 1);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    manageNotUnknown(r);
+  });
+}
+
+test('kufar manage: a valid call without a saved key -> AUTH_REQUIRED, like post', async () => {
+  const r = await run(['manage', 'off', MANAGE_ID, '--reason', 'give_up']);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'AUTH_REQUIRED', r.stdout);
+  const post = await run(['post', '--draft', await writeDraft(GOOD_DRAFT)]);
+  assert.equal(r.json.error.message, post.json.error.message);
+});
+
+test('kufar manage: with a saved key a BAD_ARGS answer does not show the key', async () => {
+  const dir = await tmpDir();
+  const token = liveToken();
+  runIn(dir, ['login', '--token-stdin'], `${token}\n`);
+  const r = runIn(dir, ['manage', 'off', MANAGE_ID, '--reason', 'bored']);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+  assert.ok(!r.stdout.includes(token));
+});
+
+test('kufar manage: a comment that holds the saved key -> TEXT_HAS_KEY, the key is not in the output', async () => {
+  const dir = await tmpDir();
+  const token = liveToken();
+  runIn(dir, ['login', '--token-stdin'], `${token}\n`);
+  const r = runIn(dir, ['manage', 'off', MANAGE_ID, '--reason', 'other', '--comment', `see ${token} here`]);
+  assert.equal(r.status, 1);
+  assert.equal(r.json?.error?.code, 'TEXT_HAS_KEY', r.stdout);
+  assert.ok(!r.stdout.includes(token));
+});
+
+test('unknown command message names manage', async () => {
+  const r = await run(['bogus']);
+  assert.equal(r.json.error.code, 'BAD_ARGS');
+  assert.match(r.json.error.message, /\bmanage\b/);
+});

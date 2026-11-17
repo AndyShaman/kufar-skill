@@ -36,6 +36,7 @@ test('normalizeMyAd: full example', () => {
     phone_hidden: true,
     bumped: false,
     image: 'https://rms.kufar.by/v1/gallery/adim1/aaaa-bbbb.jpg',
+    can: { activate: false, prolong: false, delete: false },
   });
 });
 
@@ -45,6 +46,7 @@ test('normalizeMyAd: minimal raw gives nulls, zeros and false', () => {
     listed_at: null, expires_at: null, days_left: null,
     stats: { views: 0, phone_views: 0, messages: 0, favorites: 0 },
     phone_hidden: false, bumped: false, image: null,
+    can: { activate: false, prolong: false, delete: false },
   });
 });
 
@@ -641,4 +643,86 @@ test('sendTarget: a blocked conversation is CHAT_BLOCKED, on each of the three f
 test('sendTarget: NOT_FOUND from the transport is passed through', async () => {
   const t = fakeTransport(() => { throw new KufarError('NOT_FOUND', 'нет диалога', { status: 404 }); });
   await rejectsCode(acct.sendTarget(t, CONV_ID), 'NOT_FOUND');
+});
+
+// ---- step 3f: normalizeMyAd, can and refusal ----
+
+const PERMS = ['activate', 'prolong', 'delete'];
+const permsOf = (over) => mine({ permissions: { activate_perm: false, prolong_perm: false, delete_perm: false, ...over } });
+
+test('normalizeMyAd: can is all false without permissions', () => {
+  const raw = mine();
+  delete raw.permissions;
+  assert.deepEqual(normalizeMyAd(raw).can, { activate: false, prolong: false, delete: false });
+  assert.deepEqual(normalizeMyAd({ ad_id: 5 }).can, { activate: false, prolong: false, delete: false });
+  assert.deepEqual(normalizeMyAd(mine({ permissions: null })).can, { activate: false, prolong: false, delete: false });
+});
+
+test('normalizeMyAd: can is all false for the permissions of an active listing', () => {
+  assert.deepEqual(normalizeMyAd(MY_AD_RAW).can, { activate: false, prolong: false, delete: false });
+});
+
+for (const key of PERMS) {
+  test(`normalizeMyAd: can.${key} is true only for a strict true, the others stay false`, () => {
+    const out = normalizeMyAd(permsOf({ [`${key}_perm`]: true })).can;
+    assert.deepEqual(out, { activate: false, prolong: false, delete: false, [key]: true });
+    for (const v of ['true', 1, 'yes', {}, [], null]) {
+      assert.equal(normalizeMyAd(permsOf({ [`${key}_perm`]: v })).can[key], false, String(v));
+    }
+  });
+}
+
+test('normalizeMyAd: all three permissions true -> all three can true', () => {
+  const raw = permsOf({ activate_perm: true, prolong_perm: true, delete_perm: true });
+  assert.deepEqual(normalizeMyAd(raw).can, { activate: true, prolong: true, delete: true });
+});
+
+const withMod = (message, description) => mine({ moderation_info: { message, description } });
+
+test('normalizeMyAd: no refusal key without moderation_info', () => {
+  assert.equal('refusal' in normalizeMyAd(MY_AD_RAW), false);
+  assert.equal('refusal' in normalizeMyAd(mine({ moderation_info: null })), false);
+  assert.equal('refusal' in normalizeMyAd(mine({ moderation_info: {} })), false);
+});
+
+test('normalizeMyAd: no refusal key when both strings are empty or missing', () => {
+  for (const [m, d] of [[{ ru: '' }, { ru: '' }], [{}, {}], [undefined, undefined], [{ ru: '', by: 'x' }, undefined], [null, null]]) {
+    assert.equal('refusal' in normalizeMyAd(withMod(m, d)), false);
+  }
+});
+
+test('normalizeMyAd: refusal with only message.ru has details null', () => {
+  assert.deepEqual(normalizeMyAd(withMod({ ru: 'Запрещённый товар', by: 'x' }, undefined)).refusal, { reason: 'Запрещённый товар', details: null });
+  assert.deepEqual(normalizeMyAd(withMod({ ru: 'Запрещённый товар' }, { ru: '' })).refusal, { reason: 'Запрещённый товар', details: null });
+});
+
+test('normalizeMyAd: refusal with only description.ru has reason null', () => {
+  assert.deepEqual(normalizeMyAd(withMod(undefined, { ru: 'Подробности отказа' })).refusal, { reason: null, details: 'Подробности отказа' });
+  assert.deepEqual(normalizeMyAd(withMod({ ru: '' }, { ru: 'Подробности отказа' })).refusal, { reason: null, details: 'Подробности отказа' });
+});
+
+test('normalizeMyAd: refusal with both strings', () => {
+  assert.deepEqual(normalizeMyAd(withMod({ ru: 'Причина', by: 'm' }, { ru: 'Подробности', by: 'm' })).refusal, { reason: 'Причина', details: 'Подробности' });
+});
+
+test('normalizeMyAd: refusal strings are trimmed', () => {
+  assert.deepEqual(normalizeMyAd(withMod({ ru: '  Причина \n' }, { ru: '\t Подробности  ' })).refusal, { reason: 'Причина', details: 'Подробности' });
+});
+
+test('normalizeMyAd: refusal reason is cut to 300 characters and details to 1000', () => {
+  const r = normalizeMyAd(withMod({ ru: 'п'.repeat(400) }, { ru: 'д'.repeat(1500) })).refusal;
+  assert.equal(r.reason, 'п'.repeat(300));
+  assert.equal(r.details, 'д'.repeat(1000));
+  const ok = normalizeMyAd(withMod({ ru: 'п'.repeat(300) }, { ru: 'д'.repeat(1000) })).refusal;
+  assert.equal(ok.reason.length, 300);
+  assert.equal(ok.details.length, 1000);
+});
+
+test('normalizeMyAd: the existing keys are unchanged by can and refusal', () => {
+  const base = normalizeMyAd(MY_AD_RAW);
+  const { can, refusal, ...rest } = normalizeMyAd(permsOf({ delete_perm: true, ...{} }));
+  const { can: _c, ...baseRest } = base;
+  assert.deepEqual(rest, baseRest);
+  const { refusal: r2, can: _c2, ...rest2 } = normalizeMyAd(withMod({ ru: 'Причина' }, { ru: 'Подробности' }));
+  assert.deepEqual(rest2, baseRest);
 });
