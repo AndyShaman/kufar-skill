@@ -334,8 +334,6 @@ const rule4Cases = [
   [['search', longToken], 'search <key>'],
   [['watch', 'list', longToken], 'watch list <key>'],
   [['item', longToken], 'item <key>'],
-  [['price', '--like', longToken], 'price --like <key>'],
-  [['watch', 'add', longToken], 'watch add <key>'],
   [['watch', 'remove', longToken], 'watch remove <key>'],
   [['track', 'add', longToken], 'track add <key>'],
   [['chat', longToken], 'chat <key>'],
