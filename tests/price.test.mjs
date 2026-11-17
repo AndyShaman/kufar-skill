@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { estimatePrice } from '../scripts/lib/price.mjs';
+import { estimatePrice as estimate } from '../scripts/lib/price.mjs';
 import {
-  rejectsCode, rawAd, rawAdOf, series, fakeTransport, itemIdOf, pageOf, SEARCH_PATH,
+  rejectsCode, rawAd, rawAdOf, series, fakeTransport, itemIdOf, pageOf, SEARCH_PATH, NOW, daysAgo,
 } from './helpers.mjs';
+
+const estimatePrice = (tr, o) => estimate(tr, { now: () => NOW, ...o });
 
 // search(q) answers every search request; the card request returns `card`
 const mk = (search, card = rawAd()) =>
@@ -62,6 +64,8 @@ test('like takes cat and values from the card and excludes the ad itself', async
   assert.equal(r.subject.price_byn, 620);
   assert.equal(r.subject.title, 'iPhone 13 128 ГБ');
   assert.equal(r.subject.url, 'https://www.kufar.by/item/1000000001');
+  assert.equal(r.subject.days, 0);
+  assert.equal(r.subject.stale, false);
 });
 
 test('subject is null without like; group has null query and regions', async () => {
@@ -81,7 +85,7 @@ const PAGES = [
 
 test('old slice uses the cursor of the highest page when total > 400', async () => {
   const tr = mk((q) => (q.cursor === 'c5'
-    ? pageOf(series(1000000201, [700, 720, 740, 760, 780]), 1009, PAGES)
+    ? pageOf(series(1000000201, [700, 720, 740, 760, 780], { listTime: daysAgo(40) }), 1009, PAGES)
     : pageOf(series(1000000001, SIX), 1009, PAGES)));
   const r = await estimatePrice(tr, { cat: '17010', params: P5 });
   const s = searches(tr);
@@ -93,7 +97,11 @@ test('old slice uses the cursor of the highest page when total > 400', async () 
   assert.equal(r.sample.fresh, 6);
   assert.equal(r.sample.old, 5);
   assert.equal(r.sample.used, 11);
-  assert.deepEqual(r.slices, { fresh_median: 550, old_median: 740 });
+  assert.equal(r.sample.live, 6);
+  assert.equal(r.stats.all.median, 550);
+  assert.equal(r.stale.n, 5);
+  assert.equal(r.stale.median, 740);
+  assert.equal(r.stale.vs_live_pct, 35);
 });
 
 test('old slice is skipped when total <= 400 or no page above 2', async () => {
@@ -103,7 +111,8 @@ test('old slice is skipped when total <= 400 or no page above 2', async () => {
   const b = mk(() => pageOf(series(1000000001, SIX), 1009, PAGES.slice(0, 2)));
   const r = await estimatePrice(b, { cat: '17010', params: P5 });
   assert.equal(searches(b).length, 1);
-  assert.equal(r.slices.old_median, null);
+  assert.equal(r.sample.old, 0);
+  assert.equal(r.stale.n, 0);
 });
 
 test('slices are merged without repeated ids', async () => {
@@ -285,7 +294,7 @@ test('suggest keeps 2 decimals for median < 20', async () => {
 test('comparables ascending by price with the contract keys', async () => {
   const r = await estimatePrice(mk(() => pageOf(series(1000000001, [580, 500, 560, 520, 600, 540]))), { cat: '17010', params: P5 });
   assert.deepEqual(r.comparables.map((c) => c.price_byn), [500, 520, 540, 560, 580, 600]);
-  assert.deepEqual(Object.keys(r.comparables[0]).sort(), ['company', 'id', 'listed_at', 'price_byn', 'title', 'url']);
+  assert.deepEqual(Object.keys(r.comparables[0]).sort(), ['company', 'days', 'id', 'listed_at', 'price_byn', 'stale', 'title', 'url']);
 });
 
 test('dropped ads are reported with a reason', async () => {
@@ -300,4 +309,126 @@ test('exclude removes an ad from the sample', async () => {
   const r = await estimatePrice(mk(() => pageOf(series(1000000001, SIX))), { cat: '17010', params: P5, exclude: ['1000000001'] });
   assert.equal(r.sample.used, 5);
   assert.equal(r.dropped[0].reason, 'excluded');
+});
+
+const LIVE = () => series(1000000001, SIX);
+const OLD = (prices, start = 1000000101) => series(start, prices, { listTime: daysAgo(40) });
+
+test('live ads form the basis; stale ads are reported separately', async () => {
+  const r = await estimatePrice(mk(() => pageOf([...LIVE(), ...OLD([700, 720, 740])])), { cat: '17010', params: P5 });
+  assert.equal(r.stats.all.n, 6);
+  assert.equal(r.stats.all.median, 550);
+  assert.deepEqual(r.suggest, { fast: 525, market: 550, high: 575, basis: 'private' });
+  assert.deepEqual(r.reliability, { level: 'low', reasons: ['few'] });
+  assert.equal(r.sample.used, 9);
+  assert.equal(r.sample.live, 6);
+  assert.equal(r.stale.days, 30);
+  assert.equal(r.stale.n, 3);
+  assert.equal(r.stale.median, 720);
+  assert.equal(r.stale.vs_live_pct, 31);
+});
+
+test('fewer than 5 live: basis is all kept, stale_sample, level low', async () => {
+  const r = await estimatePrice(
+    mk(() => pageOf([...series(1000000001, [500, 505, 510]), ...OLD([700, 720, 740])])),
+    { cat: '17010', params: P5 },
+  );
+  assert.equal(r.stats.all.n, 6);
+  assert.equal(r.sample.live, 3);
+  assert.equal(r.reliability.level, 'low');
+  assert.ok(r.reliability.reasons.includes('stale_sample'));
+  assert.notEqual(r.suggest, null);
+});
+
+test('stale_sample caps a narrow 10+ sample at low', async () => {
+  const r = await estimatePrice(
+    mk(() => pageOf([
+      ...series(1000000001, [500, 505, 510, 515]),
+      ...OLD([520, 525, 530, 535, 540, 545, 550]),
+    ])),
+    { cat: '17010', params: P5 },
+  );
+  assert.equal(r.sample.used, 11);
+  assert.equal(r.sample.live, 4);
+  assert.deepEqual(r.reliability, { level: 'low', reasons: ['stale_sample'] });
+  assert.equal(r.suggest.market, 525);
+});
+
+test('fewer than 5 kept is insufficient even with stale ads', async () => {
+  const r = await estimatePrice(
+    mk(() => pageOf([...series(1000000001, [500, 520]), ...OLD([700, 720])])),
+    { cat: '17010', params: P5 },
+  );
+  assert.equal(r.sample.used, 4);
+  assert.equal(r.reliability.level, 'insufficient');
+  assert.ok(r.reliability.reasons.includes('too_few'));
+  assert.equal(r.suggest, null);
+});
+
+test('stale.cheap: stale ads at or below the live median, ascending, at most 10', async () => {
+  const cheap = Array.from({ length: 12 }, (_, i) => 430 + 10 * ((i * 5) % 12)); // 430..540, shuffled
+  const r = await estimatePrice(
+    mk(() => pageOf([...LIVE(), ...OLD(cheap), ...OLD([560, 700], 1000000201)])),
+    { cat: '17010', params: P5 },
+  );
+  assert.equal(r.stale.n, 14);
+  assert.deepEqual(r.stale.cheap.map((c) => c.price_byn), [430, 440, 450, 460, 470, 480, 490, 500, 510, 520]);
+  for (const c of r.stale.cheap) {
+    assert.deepEqual(Object.keys(c).sort(), ['days', 'id', 'price_byn', 'title', 'url']);
+    assert.equal(c.days, 40);
+    assert.equal(c.url, `https://www.kufar.by/item/${c.id}`);
+  }
+});
+
+test('stale.cheap includes a price equal to the live median, not above it', async () => {
+  const r = await estimatePrice(
+    mk(() => pageOf([...LIVE(), ...OLD([550, 551])])),
+    { cat: '17010', params: P5 },
+  );
+  assert.deepEqual(r.stale.cheap.map((c) => c.price_byn), [550]);
+});
+
+test('no stale ads: empty stale block', async () => {
+  const r = await estimatePrice(mk(() => pageOf(LIVE())), { cat: '17010', params: P5 });
+  assert.deepEqual(r.stale, { days: 30, n: 0, median: null, vs_live_pct: null, cheap: [] });
+  assert.equal(r.sample.live, 6);
+});
+
+test('no live ads at all: no comparison with live, basis is stale ads', async () => {
+  const r = await estimatePrice(mk(() => pageOf(OLD(SIX))), { cat: '17010', params: P5 });
+  assert.equal(r.sample.live, 0);
+  assert.equal(r.sample.used, 6);
+  assert.equal(r.stale.n, 6);
+  assert.equal(r.stale.vs_live_pct, null);
+  assert.deepEqual(r.stale.cheap, []);
+  assert.equal(r.reliability.level, 'low');
+  assert.ok(r.reliability.reasons.includes('stale_sample'));
+});
+
+test('comparables hold live and stale ads with days and stale', async () => {
+  const r = await estimatePrice(mk(() => pageOf([...LIVE(), ...OLD([700, 720])])), { cat: '17010', params: P5 });
+  assert.equal(r.comparables.length, 8);
+  assert.deepEqual(r.comparables.map((c) => c.price_byn), [500, 520, 540, 560, 580, 600, 700, 720]);
+  for (const c of r.comparables) {
+    assert.deepEqual(Object.keys(c).sort(), ['company', 'days', 'id', 'listed_at', 'price_byn', 'stale', 'title', 'url']);
+    assert.equal(typeof c.days, 'number');
+    assert.equal(typeof c.stale, 'boolean');
+  }
+  assert.deepEqual(r.comparables.map((c) => c.stale), [false, false, false, false, false, false, true, true]);
+  assert.equal(r.comparables[6].days, 40);
+});
+
+test('subject: days and stale from the card, position from the live basis', async () => {
+  const card = rawAd({ list_time: daysAgo(45) });
+  const tr = mk(() => pageOf([...series(1000000002, SIX), ...OLD([900, 920, 940])]), card);
+  const r = await estimatePrice(tr, { like: '1000000001', by: ['phm'] });
+  assert.deepEqual(Object.keys(r.subject).sort(), ['days', 'id', 'position', 'price_byn', 'stale', 'title', 'url']);
+  assert.equal(r.subject.days, 45);
+  assert.equal(r.subject.stale, true);
+  assert.deepEqual(r.subject.position, { vs_median_pct: 13, band: 'above_q3', suspicious_low: false });
+});
+
+test('result has no slices field', async () => {
+  const r = await estimatePrice(mk(() => pageOf(LIVE())), { cat: '17010', params: P5 });
+  assert.equal('slices' in r, false);
 });

@@ -153,3 +153,10 @@ test('position with n=0', () => {
     vs_median_pct: null, band: null, suspicious_low: false,
   });
 });
+
+test('cleanForPricing: stale flag alone is not a reason to drop', () => {
+  const r = cleanForPricing([...ok(5), f('old', 100, ['stale'])]);
+  assert.equal(r.dropped.length, 0);
+  assert.equal(r.kept.length, 6);
+  assert.ok(r.kept.some((a) => a.id === 'old'));
+});

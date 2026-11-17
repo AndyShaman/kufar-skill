@@ -8,10 +8,9 @@ import {
   trackAdd, trackCheck, trackList, trackRemove,
 } from '../scripts/lib/watch.mjs';
 import {
-  tmpDir, rejectsCode, rawAdOf, series, fakeTransport, itemIdOf, pageOf, SEARCH_PATH,
+  tmpDir, rejectsCode, rawAdOf, series, fakeTransport, itemIdOf, pageOf, SEARCH_PATH, NOW, daysAgo,
 } from './helpers.mjs';
 
-const NOW = Date.parse('2026-11-17T12:00:00Z');
 const readFile = async (dir, name) => JSON.parse(await fs.readFile(path.join(dir, name), 'utf8'));
 
 test('diffSeen: fresh, price_changed, new seen', () => {
@@ -121,6 +120,22 @@ test('watchCheck reports new and price-changed ads, then nothing', async () => {
   const again = await watchCheck(ctx, 'w');
   assert.deepEqual(again.new, []);
   assert.deepEqual(again.price_changed, []);
+});
+
+test('watchCheck passes ctx.now: new ads carry days and stale', async () => {
+  const { ctx, state } = await ctxWith(series(1000000001, [500]));
+  await watchAdd(ctx, 'w', { cat: '17010' });
+  state.ads = [
+    rawAdOf({ id: 1000000001, price: 500 }),
+    rawAdOf({ id: 1000000002, price: 600 }),
+    rawAdOf({ id: 1000000003, price: 700, listTime: daysAgo(40) }),
+  ];
+  const r = await watchCheck(ctx, 'w');
+  const byId = Object.fromEntries(r.new.map((a) => [a.id, a]));
+  assert.equal(byId['1000000002'].days, 0);
+  assert.deepEqual(byId['1000000002'].flags, []);
+  assert.equal(byId['1000000003'].days, 40);
+  assert.deepEqual(byId['1000000003'].flags, ['stale']);
 });
 
 test('watchCheck unknown name', async () => {

@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSearchQuery, search, flagAds } from '../scripts/lib/search.mjs';
 import {
-  rejectsCode, throwsCode, plain, mkAd, rawAd, fakeTransport, SEARCH_PATH,
+  buildSearchQuery, search, flagAds, ageDays, STALE_DAYS,
+} from '../scripts/lib/search.mjs';
+import {
+  rejectsCode, throwsCode, plain, mkAd, rawAd, fakeTransport, SEARCH_PATH, NOW, DAY, daysAgo,
 } from './helpers.mjs';
 
 const base = { lang: 'ru', sort: 'lst.d', size: '30' };
@@ -107,7 +109,7 @@ const pages = [
 test('search calls the endpoint once and maps the response', async () => {
   const tr = fakeTransport(() => ({ ads: [rawAd()], total: 1009, pagination: { pages } }));
   const opts = { cat: '17010', params: { phm: '5380' } };
-  const r = await search(tr, opts);
+  const r = await search(tr, opts, { now: () => NOW });
   assert.equal(tr.calls.length, 1);
   assert.equal(tr.calls[0].path, SEARCH_PATH);
   assert.deepEqual(plain(tr.calls[0].query), q(opts));
@@ -121,7 +123,7 @@ test('search calls the endpoint once and maps the response', async () => {
 
 test('search tolerates missing pagination and total', async () => {
   const tr = fakeTransport(() => ({ ads: [] }));
-  const r = await search(tr, { cat: '1' });
+  const r = await search(tr, { cat: '1' }, { now: () => NOW });
   assert.equal(r.total, 0);
   assert.equal(r.next_cursor, null);
   assert.deepEqual(r.pages, []);
@@ -130,27 +132,27 @@ test('search tolerates missing pagination and total', async () => {
 
 test('search validates before calling transport', async () => {
   const tr = fakeTransport(() => ({ ads: [] }));
-  await rejectsCode(search(tr, {}), 'BAD_ARGS');
+  await rejectsCode(search(tr, {}, { now: () => NOW }), 'BAD_ARGS');
   assert.equal(tr.calls.length, 0);
 });
 
 test('flagAds: clean ad has empty flags', () => {
-  assert.deepEqual(flagAds([mkAd(1, 100)]).map((a) => a.flags), [[]]);
+  assert.deepEqual(flagAds([mkAd(1, 100)], NOW).map((a) => a.flags), [[]]);
 });
 
 test('flagAds: no_price and not_sell', () => {
-  assert.deepEqual(flagAds([mkAd(1, null)])[0].flags, ['no_price']);
-  assert.deepEqual(flagAds([mkAd(1, 100, { type: 'buy' })])[0].flags, ['not_sell']);
+  assert.deepEqual(flagAds([mkAd(1, null)], NOW)[0].flags, ['no_price']);
+  assert.deepEqual(flagAds([mkAd(1, 100, { type: 'buy' })], NOW)[0].flags, ['not_sell']);
 });
 
 test('flagAds: each suspect title word', () => {
   for (const w of ['запчаст', 'на разбор', 'на детали', 'куплю', 'заблокирован', 'iCloud', 'не включается', 'под восстановление']) {
-    assert.deepEqual(flagAds([mkAd(1, 100, { title: `Телефон ${w.toUpperCase()} срочно` })])[0].flags, ['suspect_title'], w);
+    assert.deepEqual(flagAds([mkAd(1, 100, { title: `Телефон ${w.toUpperCase()} срочно` })], NOW)[0].flags, ['suspect_title'], w);
   }
 });
 
 test('flagAds: flag order', () => {
-  const [a] = flagAds([mkAd(1, null, { type: 'buy', title: 'Куплю запчасти' })]);
+  const [a] = flagAds([mkAd(1, null, { type: 'buy', title: 'Куплю запчасти' })], NOW);
   assert.deepEqual(a.flags, ['no_price', 'not_sell', 'suspect_title']);
 });
 
@@ -159,7 +161,7 @@ test('flagAds: duplicate only for second and later', () => {
     mkAd(1, 100, { seller_key: 's', title: 'Телефон' }),
     mkAd(2, 100, { seller_key: 's', title: '  телефон ' }),
     mkAd(3, 100, { seller_key: 's', title: 'ТЕЛЕФОН' }),
-  ]);
+  ], NOW);
   assert.deepEqual(r.map((a) => a.flags), [[], ['duplicate'], ['duplicate']]);
 });
 
@@ -170,6 +172,61 @@ test('flagAds: not duplicate with different price, seller or empty key', () => {
     mkAd(3, 100, { seller_key: 'other', title: 'T' }),
     mkAd(4, 100, { seller_key: '', title: 'T' }),
     mkAd(5, 100, { seller_key: '', title: 'T' }),
-  ]);
+  ], NOW);
   assert.deepEqual(r.map((a) => a.flags), [[], [], [], [], []]);
+});
+
+test('STALE_DAYS is 30', () => {
+  assert.equal(STALE_DAYS, 30);
+});
+
+test('ageDays: whole days, floor', () => {
+  assert.equal(ageDays(daysAgo(30), NOW), 30);
+  assert.equal(ageDays(new Date(NOW - 30 * DAY + 3_600_000).toISOString(), NOW), 29);
+  assert.equal(ageDays(daysAgo(0), NOW), 0);
+});
+
+test('ageDays: future date is 0', () => {
+  assert.equal(ageDays(new Date(NOW + 5 * DAY).toISOString(), NOW), 0);
+});
+
+test('ageDays: missing or not a date is null', () => {
+  for (const v of [null, undefined, 'мусор', '']) assert.equal(ageDays(v, NOW), null, String(v));
+});
+
+test('flagAds: every ad gets days; stale from 30 days, not at 29', () => {
+  const r = flagAds([
+    mkAd(1, 100, { listed_at: daysAgo(29) }),
+    mkAd(2, 100, { listed_at: daysAgo(30) }),
+    mkAd(3, 100, { listed_at: daysAgo(40) }),
+    mkAd(4, 100),
+  ], NOW);
+  assert.deepEqual(r.map((a) => a.days), [29, 30, 40, 0]);
+  assert.deepEqual(r.map((a) => a.flags), [[], ['stale'], ['stale'], []]);
+});
+
+test('flagAds: no listed_at gives days null and no stale flag', () => {
+  const [a] = flagAds([mkAd(1, 100, { listed_at: null })], NOW);
+  assert.equal(a.days, null);
+  assert.deepEqual(a.flags, []);
+});
+
+test('flagAds: stale goes last after the other flags', () => {
+  const [a] = flagAds([mkAd(1, null, { type: 'buy', title: 'Куплю запчасти', listed_at: daysAgo(40) })], NOW);
+  assert.deepEqual(a.flags, ['no_price', 'not_sell', 'suspect_title', 'stale']);
+  const r = flagAds([
+    mkAd(1, 100, { seller_key: 's', title: 'T', listed_at: daysAgo(40) }),
+    mkAd(2, 100, { seller_key: 's', title: 'T', listed_at: daysAgo(40) }),
+  ], NOW);
+  assert.deepEqual(r[1].flags, ['duplicate', 'stale']);
+});
+
+test('search passes now to the flags', async () => {
+  const tr = fakeTransport(() => ({ ads: [rawAd({ list_time: daysAgo(40) })] }));
+  const a = (await search(tr, { cat: '1' }, { now: () => NOW })).ads[0];
+  assert.equal(a.days, 40);
+  assert.deepEqual(a.flags, ['stale']);
+  const b = (await search(tr, { cat: '1' }, { now: () => NOW - 35 * DAY })).ads[0];
+  assert.equal(b.days, 5);
+  assert.deepEqual(b.flags, []);
 });

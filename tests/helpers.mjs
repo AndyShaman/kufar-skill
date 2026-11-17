@@ -77,10 +77,15 @@ export const EXPECTED_AD = {
   body: null,
 };
 
+// fixed clock for every test that reaches the stale rule
+export const NOW = Date.parse('2026-11-17T12:00:00Z');
+export const DAY = 86_400_000;
+export const daysAgo = (n, now = NOW) => new Date(now - n * DAY).toISOString();
+
 export const rawAd = (over = {}) => ({ ...structuredClone(RAW_AD), ...over });
 
 // raw ad with a phones_model parameter; price in BYN (null = no price)
-export function rawAdOf({ id, price = 500, company = false, phm = 5380, title, type = 'sell' }) {
+export function rawAdOf({ id, price = 500, company = false, phm = 5380, title, type = 'sell', listTime }) {
   const raw = rawAd({
     ad_id: id,
     list_id: id,
@@ -90,6 +95,7 @@ export function rawAdOf({ id, price = 500, company = false, phm = 5380, title, t
     company_ad: company,
     account_id: `acc${id}`,
     type,
+    ...(listTime ? { list_time: listTime } : {}),
   });
   if (phm === null) raw.ad_parameters = raw.ad_parameters.filter((p) => p.pu !== 'phm');
   else raw.ad_parameters.find((p) => p.pu === 'phm').v = phm;
