@@ -79,6 +79,8 @@ export function buildAd({ draft, fields, type, contact }) {
     }
     const v = fieldValue(field, raw);
     if (v?.error) errors[key] = v.error;
+    // in some categories a fixed term (type) is also a form field: it may only repeat the fixed value
+    else if (key in FIXED && v !== FIXED[key]) errors[key] = 'fixed';
     else if (v !== undefined) ad[key] = v;
   }
   for (const f of fields) {

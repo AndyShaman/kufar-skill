@@ -52,7 +52,7 @@ export function buildEdit({ saved, changes, fields, savedFields, type, email }) 
 
   const own = fields.filter((f) => !SERVICE_KEYS.has(f.name));
   for (const key of Object.keys(changes)) {
-    if (FIXED.includes(key)) errors[key] = 'fixed';
+    if (FIXED.includes(key) || (AS_SAVED.includes(key) && changes[key] !== ad[key])) errors[key] = 'fixed';
     else if (!SERVICE_KEYS.has(key) && !own.some((f) => f.name === key)) errors[key] = 'unknown';
   }
   for (const f of own) {
