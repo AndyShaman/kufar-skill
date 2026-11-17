@@ -269,3 +269,18 @@ test('cleanPhoto png: no IEND -> null', () => {
   assert.equal(cleanPhoto(png(IHDR, PHYS, IDAT), 'png'), null);
   assert.equal(cleanPhoto(PNG_SIG, 'png'), null);
 });
+
+test('cleanPhoto: bytes after the end of the picture (a second image, a video) are dropped and reported as extra', () => {
+  const main = jpeg(APP0, DQT);
+  const second = jpeg(APP0, exif('II', { gps: true }), DQT);
+  const r = cleanPhoto(Buffer.concat([main, second, Buffer.from('MOTIONVIDEO')]), 'jpg');
+  assert.deepEqual(r.data, main);
+  assert.deepEqual(r.removed, ['extra']);
+});
+
+test('cleanPhoto: a picture cut off before its end marker is kept to the last byte', () => {
+  const cut = jpeg(APP0, DQT).subarray(0, -2);
+  const r = cleanPhoto(cut, 'jpg');
+  assert.deepEqual(r.data, cut);
+  assert.deepEqual(r.removed, []);
+});

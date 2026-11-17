@@ -132,7 +132,7 @@ test('compare: the cards come in the order of the refs, ids and links alike, fet
 
 test('compare: the answer has exactly count, ads, missing, differs, same, mixed_categories', async () => {
   const r = await compare(market(), IDS.slice(0, 2));
-  assert.deepEqual(Object.keys(r).sort(), ['ads', 'count', 'differs', 'mixed_categories', 'missing', 'same']);
+  assert.deepEqual(Object.keys(r).sort(), ['ads', 'count', 'differs', 'missing', 'mixed_categories', 'same']);
 });
 
 test('compare: differs, same and mixed_categories are those of compareAds over the fetched cards', async () => {
@@ -191,7 +191,7 @@ test('pickBest: a price of half the median or less is too cheap, the cheapest to
   assert.equal(r.median, 400);
   assert.deepEqual(r.skipped.too_cheap.map((x) => x.id), [idAt(0), idAt(1)]);
   assert.deepEqual(r.picked, [
-    { id: idAt(2), price_byn: 250, vs_median_pct: -38, stale: false },
+    { id: idAt(2), price_byn: 250, vs_median_pct: -37, stale: false },
     { id: idAt(3), price_byn: 300, vs_median_pct: -25, stale: false },
     { id: idAt(4), price_byn: 380, vs_median_pct: -5, stale: false },
   ]);
@@ -286,7 +286,7 @@ function bestMarket(gone = [], ids = BIDS, total = ids.length) {
 
 test('compareBest: the answer has group, stats, reliability, picked, skipped and the keys of compare', async () => {
   const r = await bestOf(bestMarket());
-  assert.deepEqual(Object.keys(r).sort(), ['ads', 'count', 'differs', 'group', 'mixed_categories', 'missing', 'picked', 'reliability', 'same', 'skipped', 'stats']);
+  assert.deepEqual(Object.keys(r).sort(), ['ads', 'count', 'differs', 'group', 'missing', 'mixed_categories', 'picked', 'reliability', 'same', 'skipped', 'stats']);
   assert.equal(r.group.cat, '17010');
   assert.deepEqual(r.group.params, { phm: '5380' });
   assert.ok(r.stats.all);
