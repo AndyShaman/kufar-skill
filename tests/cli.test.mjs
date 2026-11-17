@@ -4,6 +4,8 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpDir } from './helpers.mjs';
+import { rawAdOf } from './helpers.mjs';
+import { photoDir, sizedJpeg, exif } from './photofix.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(ROOT, 'scripts', 'kufar.mjs');
@@ -1105,6 +1107,7 @@ import fs from 'node:fs';
 const log = process.env.FAKE_LOG;
 const items = JSON.parse(process.env.FAKE_ITEMS || '{}');
 const saved = JSON.parse(process.env.FAKE_SAVED || 'null');
+const raws = JSON.parse(process.env.FAKE_RAW || '{}');
 const json = (body) => new Response(JSON.stringify(body), { status: 200 });
 globalThis.fetch = async (url) => {
   const u = new URL(url);
@@ -1112,6 +1115,8 @@ globalThis.fetch = async (url) => {
   fs.appendFileSync(log, JSON.stringify({ path: u.pathname, status }) + '\\n');
   if (u.pathname === '/my-items-v2/v2/items') return json({ ads: items[status] ?? [] });
   if (u.pathname.startsWith('/insertion/v1/processing/load/')) return json({ result: saved });
+  const rendered = u.pathname.match(/^\\/search-api\\/v2\\/item\\/(\\d+)\\/rendered$/);
+  if (rendered && raws[rendered[1]]) return json({ result: raws[rendered[1]] });
   return new Response('{}', { status: 404 });
 };
 `;
@@ -1130,7 +1135,7 @@ const TREE = { categories: [{ id: 1000, name_ru: 'Родитель', subcategori
 const MY_CONTACT = { name: 'Тестовый Продавец', phone: '375290000000', email: 'a@example.com' };
 
 // runs a CLI command in a fresh state folder with a saved key, the cached tree and form, and the fake fetch
-async function runFake(args, { items = {}, saved = null, draft } = {}) {
+async function runFake(args, { items = {}, saved = null, draft = {}, raw = {} } = {}) {
   const dir = await tmpDir();
   const stateDir = path.join(dir, 'state');
   await fs.mkdir(path.join(stateDir, 'cache'), { recursive: true });
@@ -1149,7 +1154,7 @@ async function runFake(args, { items = {}, saved = null, draft } = {}) {
   await fs.writeFile(file, JSON.stringify(draft));
   const r = spawnSync(process.execPath, ['--import', preload, CLI, ...args(file)], {
     cwd: ROOT, encoding: 'utf8', timeout: 30000,
-    env: { ...process.env, KUFAR_STATE_DIR: stateDir, FAKE_LOG: logFile, FAKE_ITEMS: JSON.stringify(items), FAKE_SAVED: JSON.stringify(saved) },
+    env: { ...process.env, KUFAR_STATE_DIR: stateDir, FAKE_LOG: logFile, FAKE_ITEMS: JSON.stringify(items), FAKE_SAVED: JSON.stringify(saved), FAKE_RAW: JSON.stringify(raw) },
   });
   let json;
   try { json = JSON.parse(r.stdout); } catch { json = undefined; }
@@ -1211,4 +1216,65 @@ test('kufar edit: an active listing gives the email with one request', async () 
   });
   assert.equal(r.json?.edited, false, r.stdout);
   assert.deepEqual(r.contactStatuses, ['active']);
+});
+
+// ---- step 4: photo cleaning in previews, compare ----
+
+test('kufar post preview: every photo carries what was removed from it', async (t) => {
+  const { dirty } = sizedJpeg(20000, [exif('II', { make: true, gps: true })]);
+  const file = path.join(await photoDir(t), 'a.jpg');
+  await fs.writeFile(file, dirty);
+  const r = await runFake((f) => ['post', '--draft', f], { draft: { ...POST_DRAFT, photos: [file] } });
+  assert.equal(r.json?.posted, false, r.stdout);
+  assert.equal(r.json.preview.photos.length, 1);
+  assert.equal(r.json.preview.photos[0].file, file);
+  assert.deepEqual(r.json.preview.photos[0].removed, ['location', 'exif']);
+});
+
+test('kufar edit preview: a new photo carries what was removed from it', async (t) => {
+  const { dirty } = sizedJpeg(20000, [exif('MM', { make: true, gps: true })]);
+  const file = path.join(await photoDir(t), 'new.jpg');
+  await fs.writeFile(file, dirty);
+  const saved = { ...SAVED_AD, images: [{ media_storage: 'rms', path: 'adim1/a.jpg' }] };
+  const r = await runFake((f) => ['edit', '1000000001', '--changes', f], { saved, draft: { photos: [1, file] }, items: { active: [MY_CONTACT] } });
+  assert.equal(r.json?.edited, false, r.stdout);
+  assert.equal(r.json.preview.photos[1].file, file);
+  assert.deepEqual(r.json.preview.photos[1].removed, ['location', 'exif']);
+});
+
+const RAWS = {
+  1000000001: rawAdOf({ id: 1000000001, price: 300 }),
+  1000000002: rawAdOf({ id: 1000000002, price: 400, phm: 5381 }),
+};
+const compareRun = (...refs) => runFake(() => ['compare', ...refs], { raw: RAWS });
+
+for (const [name, refs] of [
+  ['one ref', ['1000000001']],
+  ['six refs', ['1000000001', '1000000002', '1000000003', '1000000004', '1000000005', '1000000006']],
+  ['the same ref twice', ['1000000001', '1000000001']],
+  ['an id and a link to the same listing', ['1000000001', 'https://www.kufar.by/item/1000000001']],
+]) {
+  test(`kufar compare: ${name} -> BAD_ARGS`, async () => {
+    const r = await compareRun(...refs);
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.json?.error?.code, 'BAD_ARGS', r.stdout);
+    assert.notEqual(r.json.error.details?.command, 'compare', `compare is an unknown command: ${r.stdout}`);
+  });
+}
+
+test('kufar compare: two refs give the comparison, each card flagged as item flags it', async () => {
+  const r = await compareRun('1000000001', 'https://www.kufar.by/item/1000000002');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.count, 2);
+  assert.deepEqual(r.json.missing, []);
+  assert.equal(r.json.ads.length, 2);
+  assert.ok(Array.isArray(r.json.differs));
+  assert.ok(Array.isArray(r.json.same));
+  assert.equal(typeof r.json.mixed_categories, 'boolean');
+  assert.ok(r.json.differs.some((x) => x.name === 'phones_model'), r.stdout);
+  const item = await runFake(() => ['item', '1000000001'], { raw: RAWS });
+  assert.equal(item.status, 0, item.stdout);
+  assert.deepEqual(Object.keys(r.json.ads[0]), Object.keys(item.json.ad));
+  assert.ok('flags' in r.json.ads[0]);
+  assert.deepEqual(r.json.ads[0], item.json.ad);
 });

@@ -7,6 +7,7 @@ import { buildAd, maskContact, photoInfo, postCode, uploadPhoto, insertAd, submi
 import {
   tmpDir, rejectsCode, errText, NOW, DAY, goodToken, fakeFetch, jsonRes, headersOf,
 } from './helpers.mjs';
+import { photoDir, sizedJpeg, exif, COM, IPTC, jpeg, APP0, EOI, countOf, png, chunk, IHDR, IEND } from './photofix.mjs';
 
 const TOKEN = goodToken();
 const UPLOAD_URL = 'https://ads-image-uploader.kufar.by/v1/images';
@@ -228,8 +229,11 @@ test('maskContact: phone, email and name', () => {
 
 async function photoFile(name, size) {
   const f = path.join(await tmpDir(), name);
-  const data = Buffer.alloc(size, 7);
-  data.write(`${name}-${size}`);
+  // a well-formed image with nothing to remove, of exactly `size` bytes
+  const data = /\.png$/i.test(name)
+    ? png(IHDR, chunk('IDAT', Buffer.alloc(size - 8 - IHDR.length - IEND.length - 12, 7)), IEND)
+    : Buffer.concat([jpeg(APP0).subarray(0, -2), Buffer.alloc(size - jpeg(APP0).length, 7), EOI]);
+  assert.equal(data.length, size);
   await fs.writeFile(f, data);
   return { file: f, data };
 }
@@ -243,7 +247,7 @@ const badFile = (p, index) => assert.rejects(p, (e) => {
 
 test('photoInfo: a good .jpg', async () => {
   const { file, data } = await photoFile('a.jpg', 20000);
-  assert.deepEqual(await photoInfo([file]), [{ file, ext: 'jpg', bytes: 20000, sha256: sha(data), data }]);
+  assert.deepEqual(await photoInfo([file]), [{ file, ext: 'jpg', bytes: 20000, sha256: sha(data), data, removed: [] }]);
 });
 test('photoInfo: a good .PNG has ext in lower case', async () => {
   const { file, data } = await photoFile('B.PNG', 15000);
@@ -279,6 +283,143 @@ test('photoInfo: a file above 10485760 bytes -> bad_file', async () => {
 test('photoInfo: a file of exactly 10485760 bytes passes', async () => {
   const { file } = await photoFile('a.jpg', 10485760);
   assert.equal((await photoInfo([file]))[0].bytes, 10485760);
+});
+
+// photo cleaning and HEIC (step 4)
+
+async function writePhoto(t, name, data) {
+  const f = path.join(await photoDir(t), name);
+  await fs.writeFile(f, data);
+  return f;
+}
+const GPS_EXIF = exif('II', { make: true, gps: true });
+
+test('photoInfo: a jpeg with Exif and GPS comes back cleaned, the entry describes the cleaned bytes, the file is not touched', async (t) => {
+  const { clean, dirty } = sizedJpeg(20000, [GPS_EXIF]);
+  const file = await writePhoto(t, 'a.jpg', dirty);
+  const [info] = await photoInfo([file]);
+  assert.equal(countOf(info.data, 'Exif'), 0);
+  assert.deepEqual(info.data, clean);
+  assert.deepEqual(info, { file, ext: 'jpg', bytes: clean.length, sha256: sha(clean), data: clean, removed: ['location', 'exif'] });
+  assert.deepEqual(await fs.readFile(file), dirty);
+});
+
+test('photoInfo: a clean jpeg has removed []', async (t) => {
+  const { clean } = sizedJpeg(20000);
+  const [info] = await photoInfo([await writePhoto(t, 'a.jpg', clean)]);
+  assert.deepEqual(info.removed, []);
+  assert.deepEqual(info.data, clean);
+});
+
+test('photoInfo: a png comes back without its text chunks', async (t) => {
+  const clean = png(IHDR, chunk('IDAT', Buffer.alloc(20000, 5)), IEND);
+  const dirty = png(IHDR, chunk('tEXt', Buffer.from('Comment\0x', 'latin1')), chunk('IDAT', Buffer.alloc(20000, 5)), IEND);
+  const [info] = await photoInfo([await writePhoto(t, 'a.png', dirty)]);
+  assert.deepEqual(info.removed, ['text']);
+  assert.deepEqual(info.data, clean);
+  assert.equal(info.sha256, sha(clean));
+});
+
+test('photoInfo: the size rule counts the cleaned bytes (over 10240 only thanks to metadata -> bad_file)', async (t) => {
+  const { clean, dirty } = sizedJpeg(10240, [COM, IPTC, GPS_EXIF]);
+  assert.ok(dirty.length > 10240);
+  assert.equal(clean.length, 10240);
+  await badFile(photoInfo([await writePhoto(t, 'a.jpg', dirty)]), 0);
+});
+
+test('photoInfo: 10241 cleaned bytes pass even when the file has metadata on top', async (t) => {
+  const { clean, dirty } = sizedJpeg(10241, [COM, IPTC, GPS_EXIF]);
+  const [info] = await photoInfo([await writePhoto(t, 'a.jpg', dirty)]);
+  assert.equal(info.bytes, 10241);
+  assert.deepEqual(info.data, clean);
+});
+
+test('photoInfo: bytes that are not a jpeg under a .jpg name -> bad_file with the index', async (t) => {
+  const good = await writePhoto(t, 'a.jpg', sizedJpeg(20000).clean);
+  const broken = await writePhoto(t, 'b.jpg', Buffer.alloc(20000, 7));
+  await badFile(photoInfo([good, broken]), 1);
+});
+
+test('photoInfo: a jpeg without a scan under a .jpg name -> bad_file', async (t) => {
+  const noScan = Buffer.concat([jpeg(APP0).subarray(0, 2 + APP0.length), Buffer.alloc(20000, 1)]);
+  await badFile(photoInfo([await writePhoto(t, 'a.jpg', noScan)]), 0);
+});
+
+test('photoInfo: broken png bytes under a .png name -> bad_file', async (t) => {
+  await badFile(photoInfo([await writePhoto(t, 'a.png', Buffer.alloc(20000, 7))]), 0);
+});
+
+// HEIC: only through the injected convertHeic, the system tool is never run here
+const heicFake = (result) => {
+  const calls = [];
+  const fn = async (file) => { calls.push(file); return typeof result === 'function' ? result(file) : result; };
+  fn.calls = calls;
+  return fn;
+};
+
+for (const name of ['a.heic', 'a.heif', 'A.HEIC']) {
+  test(`photoInfo: ${name} on darwin goes through convertHeic and then through the cleaning`, async (t) => {
+    const { clean, dirty } = sizedJpeg(20000, [GPS_EXIF]);
+    const file = await writePhoto(t, name, Buffer.alloc(20000, 3));
+    const convertHeic = heicFake(dirty);
+    const [info] = await photoInfo([file], { platform: 'darwin', convertHeic });
+    assert.deepEqual(convertHeic.calls, [file]);
+    assert.equal(info.ext, 'jpg');
+    assert.deepEqual(info.removed, ['heic', 'location', 'exif']);
+    assert.deepEqual(info.data, clean);
+    assert.equal(info.bytes, clean.length);
+    assert.equal(info.sha256, sha(clean));
+    assert.equal(info.file, file);
+  });
+}
+
+test('photoInfo: a heic whose jpeg has nothing to clean gets removed [heic]', async (t) => {
+  const { clean } = sizedJpeg(20000);
+  const file = await writePhoto(t, 'a.heic', Buffer.alloc(20000, 3));
+  const [info] = await photoInfo([file], { platform: 'darwin', convertHeic: heicFake(clean) });
+  assert.deepEqual(info.removed, ['heic']);
+});
+
+test('photoInfo: a heic mixed with a jpeg keeps the order and the index', async (t) => {
+  const { clean } = sizedJpeg(20000);
+  const jpg = await writePhoto(t, 'a.jpg', clean);
+  const heic = await writePhoto(t, 'b.heic', Buffer.alloc(20000, 3));
+  const res = await photoInfo([jpg, heic], { platform: 'darwin', convertHeic: heicFake(clean) });
+  assert.deepEqual(res.map((x) => x.file), [jpg, heic]);
+  assert.deepEqual(res.map((x) => x.removed), [[], ['heic']]);
+});
+
+test('photoInfo: a convertHeic that rejects -> bad_file with the index', async (t) => {
+  const { clean } = sizedJpeg(20000);
+  const jpg = await writePhoto(t, 'a.jpg', clean);
+  const heic = await writePhoto(t, 'b.heic', Buffer.alloc(20000, 3));
+  await badFile(photoInfo([jpg, heic], { platform: 'darwin', convertHeic: heicFake(() => { throw new Error('sips failed'); }) }), 1);
+});
+
+test('photoInfo: a convertHeic that gives bytes which are not a jpeg -> bad_file', async (t) => {
+  const heic = await writePhoto(t, 'a.heic', Buffer.alloc(20000, 3));
+  await badFile(photoInfo([heic], { platform: 'darwin', convertHeic: heicFake(Buffer.alloc(20000, 9)) }), 0);
+});
+
+test('photoInfo: a heic on another platform -> DRAFT_INVALID heic with the index, convertHeic is not called', async (t) => {
+  const { clean } = sizedJpeg(20000);
+  const jpg = await writePhoto(t, 'a.jpg', clean);
+  const heic = await writePhoto(t, 'b.heic', Buffer.alloc(20000, 3));
+  const convertHeic = heicFake(clean);
+  await assert.rejects(photoInfo([jpg, heic], { platform: 'linux', convertHeic }), (e) => {
+    assert.equal(e.name, 'KufarError');
+    assert.equal(e.code, 'DRAFT_INVALID');
+    assert.equal(e.details.fields.photos, 'heic');
+    assert.equal(e.details.index, 1);
+    return true;
+  });
+  assert.deepEqual(convertHeic.calls, []);
+});
+
+test('photoInfo: a .gif is bad_file and convertHeic is not called', async (t) => {
+  const convertHeic = heicFake(sizedJpeg(20000).clean);
+  await badFile(photoInfo([await writePhoto(t, 'a.gif', Buffer.alloc(20000, 3))], { platform: 'darwin', convertHeic }), 0);
+  assert.deepEqual(convertHeic.calls, []);
 });
 
 // ---- postCode ----
