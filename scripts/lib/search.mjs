@@ -54,19 +54,27 @@ export function buildSearchQuery(opts) {
   return q;
 }
 
-export async function search(transport, opts) {
+export const STALE_DAYS = 30;
+
+export function ageDays(listedAt, now) {
+  const t = listedAt ? Date.parse(listedAt) : NaN;
+  if (Number.isNaN(t)) return null;
+  return Math.max(0, Math.floor((now - t) / 86400000));
+}
+
+export async function search(transport, opts, { now = Date.now } = {}) {
   const query = buildSearchQuery(opts);
   const raw = await transport.getJson('/search-api/v2/search/rendered-paginated', query);
   const pages = raw.pagination?.pages ?? [];
   return {
     total: raw.total ?? 0,
-    ads: flagAds((raw.ads ?? []).map(normalizeAd)),
+    ads: flagAds((raw.ads ?? []).map(normalizeAd), now()),
     next_cursor: pages.find((p) => p.label === 'next')?.token || null,
     pages: pages.filter((p) => p.token).map((p) => ({ num: p.num, cursor: p.token })),
   };
 }
 
-export function flagAds(ads) {
+export function flagAds(ads, now = Date.now()) {
   const seen = new Set();
   return ads.map((ad) => {
     const flags = [];
@@ -79,6 +87,8 @@ export function flagAds(ads) {
       if (seen.has(key)) flags.push('duplicate');
       seen.add(key);
     }
-    return { ...ad, flags };
+    const days = ageDays(ad.listed_at, now);
+    if (days !== null && days >= STALE_DAYS) flags.push('stale');
+    return { ...ad, flags, days };
   });
 }

@@ -1,6 +1,6 @@
 import { KufarError } from './errors.mjs';
 import { fetchAd } from './ads.mjs';
-import { search } from './search.mjs';
+import { search, ageDays, STALE_DAYS } from './search.mjs';
 import { priceStats, cleanForPricing, reliability, position } from './stats.mjs';
 
 const NOTE = 'Это цены объявлений, а не сделок.';
@@ -15,7 +15,7 @@ function contradicts(wanted, value) {
 
 const medianOf = (ads) => priceStats(ads.map((a) => a.price_byn)).median;
 
-export async function estimatePrice(transport, { cat, params = {}, query, regions, exclude = [], include = [], like, by } = {}) {
+export async function estimatePrice(transport, { cat, params = {}, query, regions, exclude = [], include = [], like, by, now = Date.now } = {}) {
   let subjectAd = null;
   if (like !== undefined) {
     subjectAd = await fetchAd(transport, like);
@@ -40,16 +40,14 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
   const base = byWords ? { cat, query, regions, sort: 'new', limit: 200 } : { cat, params, regions, sort: 'new', limit: 200 };
   const notSubject = (ads) => ads.filter((a) => a.id !== subjectAd?.id);
 
-  const fresh = await search(transport, base);
+  const fresh = await search(transport, base, { now });
   const freshAds = notSubject(fresh.ads);
   const pool = new Map(freshAds.map((a) => [a.id, a]));
 
-  let oldIds = null;
   let oldCount = 0;
   const last = fresh.pages.filter((p) => p.num > 2).sort((a, b) => b.num - a.num)[0];
   if (fresh.total > 400 && last) {
-    const old = notSubject((await search(transport, { ...base, cursor: last.cursor })).ads);
-    oldIds = new Set(old.map((a) => a.id));
+    const old = notSubject((await search(transport, { ...base, cursor: last.cursor }, { now })).ads);
     for (const a of old) {
       if (pool.has(a.id)) continue;
       pool.set(a.id, a);
@@ -60,7 +58,7 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
   const unclassified = [];
   if (!byWords && query) {
     const inc = new Set(include.map(String));
-    const words = notSubject((await search(transport, { cat, query, regions, sort: 'new', limit: 200 })).ads);
+    const words = notSubject((await search(transport, { cat, query, regions, sort: 'new', limit: 200 }, { now })).ads);
     for (const ad of words) {
       if (pool.has(ad.id)) continue;
       const own = Object.values(ad.params);
@@ -75,17 +73,25 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
   }
 
   const { kept, dropped } = cleanForPricing([...pool.values()], { exclude, include });
+  const isStale = (a) => a.flags.includes('stale');
+  const live = kept.filter((a) => !isStale(a));
+  const staleAds = kept.filter(isStale);
+  const staleSample = live.length < 5;
+  const core = staleSample ? kept : live;
   const prices = (ads) => ads.map((a) => a.price_byn);
   const stats = {
-    all: priceStats(prices(kept)),
-    private: priceStats(prices(kept.filter((a) => a.company === false))),
-    company: priceStats(prices(kept.filter((a) => a.company === true))),
+    all: priceStats(prices(core)),
+    private: priceStats(prices(core.filter((a) => a.company === false))),
+    company: priceStats(prices(core.filter((a) => a.company === true))),
   };
   const basis = stats.private.n >= 5 ? 'private' : 'all';
   const st = stats[basis];
-  const rel = reliability(st);
+  let rel = reliability(st);
+  if (staleSample && rel.level !== 'insufficient') rel = { level: 'low', reasons: [...rel.reasons, 'stale_sample'] };
   const round = st.median >= 20 ? Math.round : (x) => Math.round(x * 100) / 100;
-  const freshIds = new Set(freshAds.map((a) => a.id));
+  const liveMedian = medianOf(live);
+  const staleMedian = medianOf(staleAds);
+  const subjectDays = subjectAd && ageDays(subjectAd.listed_at, now());
 
   return {
     group: { cat, params, query: query ?? null, regions: regions ?? null },
@@ -94,19 +100,26 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
       title: subjectAd.title,
       price_byn: subjectAd.price_byn,
       url: subjectAd.url,
+      days: subjectDays,
+      stale: subjectDays !== null && subjectDays >= STALE_DAYS,
       position: subjectAd.price_byn === null ? null : position(subjectAd.price_byn, st),
     },
     total_on_site: fresh.total,
-    sample: { fresh: freshAds.length, old: oldCount, used: kept.length },
+    sample: { fresh: freshAds.length, old: oldCount, used: kept.length, live: live.length },
     stats,
     reliability: rel,
-    slices: {
-      fresh_median: medianOf(kept.filter((a) => freshIds.has(a.id))),
-      old_median: oldIds ? medianOf(kept.filter((a) => oldIds.has(a.id))) : null,
+    stale: {
+      days: STALE_DAYS,
+      n: staleAds.length,
+      median: staleMedian,
+      vs_live_pct: staleMedian === null || liveMedian === null ? null : Math.round((staleMedian / liveMedian - 1) * 100),
+      cheap: liveMedian === null ? [] : staleAds.filter((a) => a.price_byn <= liveMedian)
+        .sort((a, b) => a.price_byn - b.price_byn).slice(0, 10)
+        .map(({ id, title, price_byn, days, url }) => ({ id, title, price_byn, days, url })),
     },
     suggest: rel.level === 'insufficient' ? null : { fast: round(st.q1), market: round(st.median), high: round(st.q3), basis },
     comparables: [...kept].sort((a, b) => a.price_byn - b.price_byn)
-      .map(({ id, title, price_byn, company, listed_at, url }) => ({ id, title, price_byn, company, listed_at, url })),
+      .map(({ id, title, price_byn, company, listed_at, days, flags, url }) => ({ id, title, price_byn, company, listed_at, days, stale: flags.includes('stale'), url })),
     dropped,
     unclassified,
     note: NOTE,
