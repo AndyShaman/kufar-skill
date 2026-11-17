@@ -22,6 +22,8 @@ const UNDER_LOGIN = [
   /^\/insertion\/v1\/processing\/load\/\d+$/,
   /^\/messaging-api\/v1\/counter$/,
   /^\/messaging-api\/v4\/conversations$/,
+  /^\/messaging-api\/v1\/conversations\/check\/\d+$/,
+  /^\/messaging-api\/v3\/conversations\/info\/\d+$/,
   new RegExp(`^/messaging-api/v4/conversations/${UUID}/messages$`),
 ];
 

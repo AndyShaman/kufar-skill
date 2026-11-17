@@ -99,6 +99,19 @@ export function buildAd({ draft, fields, type, contact }) {
   return { ad, photos: draft.photos ?? [] };
 }
 
+const TITLE_HINTS = [
+  ['selling_word', /^\s*(?:продам|продаю|продается|продаётся|куплю|срочно)(?!\p{L})/iu],
+  ['price', /\d\s?(?:рублей|рубля|руб\.?|р\.?|byn|usd|eur)(?![\p{L}\p{N}])|[$€]/iu],
+  ['contact', /@|https?:\/\/|www\.|(?:\+375|80)(?:[\s()-]*\d){9}/iu],
+  ['glued', /\d(?:gb|гб|tb|тб)(?!\p{L})/iu],
+];
+
+// a hint for the agent, not a check: Kufar search ranks titles with all the words of the query first
+export function titleHints(subject) {
+  if (typeof subject !== 'string') return [];
+  return TITLE_HINTS.filter(([, re]) => re.test(subject)).map(([name]) => name);
+}
+
 export const maskEmail = (email) => `${email[0]}…${email.slice(email.indexOf('@'))}`;
 
 export function maskContact({ name, phone, email }) {

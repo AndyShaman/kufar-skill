@@ -35,15 +35,42 @@ export function confirmCode(conversationId, text) {
   return createHash('sha256').update(`${conversationId.toLowerCase()}\n${text}`).digest('hex').slice(0, 12);
 }
 
+const FORMAL = ['заинтересовал', 'подскажите, пожалуйста', 'буду признател', 'буду благодар', 'заранее благодар', 'заранее спасибо',
+  'с уважением', 'хотел бы уточнить', 'хотела бы уточнить', 'надеюсь на', 'доброго времени суток'];
+const STYLE = [
+  ['long_dash', (t) => /[—–]/.test(t)],
+  ['long', (t) => t.length > 300],
+  ['exclaim', (t) => t.split('!').length > 2],
+  ['emoji', (t) => /\p{Extended_Pictographic}/u.test(t)],
+  ['list', (t) => /^[ \t]*(?:[-•*]|\d+[.)])/m.test(t)],
+  ['formal', (t) => FORMAL.some((p) => t.toLowerCase().includes(p))],
+];
+
+// a hint for the agent, not a filter: the text is sent as it is
+export function styleFlags(text) {
+  return STYLE.filter(([, test]) => test(text)).map(([name]) => name);
+}
+
+// the value of a field of the answer: a string or a number, anything else is null
+const plain = (v) => (typeof v === 'string' || typeof v === 'number' ? v : null);
+
 // the address holds the key, so no error carries it or the text of the original error
-export async function sendMessage({ token, conversationId, text, WebSocketImpl = globalThis.WebSocket, uuid = randomUUID, timeoutMs = 20000 }) {
+export async function sendMessage({ token, conversationId, adId, text, WebSocketImpl = globalThis.WebSocket, uuid = randomUUID, timeoutMs = 20000 }) {
+  if ((conversationId === undefined) === (adId === undefined)) throw bad('Нужен ровно один из номера диалога и номера объявления');
+  if (adId !== undefined && !/^\d+$/.test(adId)) throw bad('Нужен номер объявления из цифр');
   return new Promise((resolve, reject) => {
     const url = `${WS_URL}?token=${encodeURIComponent(token)}&X-App-Name=Web%20Kufar&X-Device-ID=${uuid()}`;
-    const frame = {
-      payload: { conversation_id: conversationId, client_message_id: uuid(), text, type: 'text' },
-      req_type: 'send_message',
-      request_id: uuid(),
-    };
+    const frame = adId === undefined
+      ? {
+        payload: { conversation_id: conversationId, client_message_id: uuid(), text, type: 'text' },
+        req_type: 'send_message',
+        request_id: uuid(),
+      }
+      : {
+        payload: { ad_id: Number(adId), client_conversation_id: uuid(), message: { client_message_id: uuid(), text, type: 'text' } },
+        req_type: 'create_conversation',
+        request_id: uuid(),
+      };
     const ws = new WebSocketImpl(url);
     let sent = false;
     let done = false;
@@ -76,8 +103,11 @@ export async function sendMessage({ token, conversationId, text, WebSocketImpl =
       } catch {
         return;
       }
-      if (m?.req_type !== 'send_message' || m.request_id !== frame.request_id) return;
-      if (m.status === 'success') {
+      if (m?.req_type !== frame.req_type || m.request_id !== frame.request_id) return;
+      if (m.status === 'success' && adId !== undefined) {
+        const r = m.response;
+        finish(resolve, { conversation_id: plain(r?.conversation_id), message_id: plain(r?.message_id), at: plain(r?.message_ts) });
+      } else if (m.status === 'success') {
         finish(resolve, { message_id: m.response?.message_id ?? null, at: m.response?.message_ts ?? null });
       } else if (m.status === 'error') {
         const code = m.response?.code;

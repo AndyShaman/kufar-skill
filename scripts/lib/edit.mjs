@@ -1,4 +1,7 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { KufarError } from './errors.mjs';
+import { readJson, writeJsonAtomic } from './storage.mjs';
 import { SEGMENTATION, SERVICE_KEYS, call, fieldValue, kopecks, refusedFields, sha256, uploadPhoto } from './post.mjs';
 
 const UPDATE_URL = 'https://api.kufar.by/insertion/v1/processing/update/';
@@ -7,6 +10,7 @@ const AS_SAVED = ['category', 'type', 'company_ad', 'language', 'currency', 'rem
 const KNOWN = new Set([...AS_SAVED, ...SERVICE_KEYS, 'list_id', 'category_type', 'clear_phone_1', 'images',
   'type_field_name', 'type_field_value', 'refusal_reason', 'deactivated', 'environment_id']);
 const FIXED = ['category', 'name', 'phone'];
+const DAY = 24 * 60 * 60 * 1000;
 
 export const editUnsupported = (details) => new KufarError('EDIT_UNSUPPORTED',
   'Это объявление утилита не правит, исправьте его на сайте', details);
@@ -133,8 +137,23 @@ export async function updateAd({ token, id, ad, fetchImpl = globalThis.fetch, ti
   throw unconfirmed();
 }
 
-export async function submitEdit({ token, id, ad, photos, fetchImpl = globalThis.fetch }) {
+// while the moderator looks at an edit Kufar shows the previous version, so the same edit would get the same code again
+export async function submitEdit({ token, id, ad, photos, fetchImpl = globalThis.fetch, stateDir, code, now = Date.now }) {
+  const file = stateDir && code ? path.join(stateDir, 'edit-last.json') : null;
+  if (file) {
+    const last = await readJson(file, null);
+    if (last?.id === id && last.code === code && typeof last.at === 'number' && now() - last.at <= DAY) {
+      throw new KufarError('EDIT_PENDING', 'Эта правка уже отправлена. Пока её смотрит модератор, Куфар показывает прежнюю '
+        + 'версию: проверьте позже командой item', { at: last.at });
+    }
+  }
   const images = [];
   for (const p of photos) images.push(p.path ?? await uploadPhoto({ token, data: p.data, ext: p.ext, fetchImpl }));
-  return updateAd({ token, id, ad: { ...ad, images, is_new_image: photos.map((p) => p.path === undefined) }, fetchImpl });
+  if (file) await writeJsonAtomic(file, { id, code, at: now() });
+  try {
+    return await updateAd({ token, id, ad: { ...ad, images, is_new_image: photos.map((p) => p.path === undefined) }, fetchImpl });
+  } catch (e) {
+    if (file && (e.code === 'EDIT_REFUSED' || e.code === 'EDIT_FAILED')) await fs.rm(file, { force: true });
+    throw e;
+  }
 }

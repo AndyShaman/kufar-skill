@@ -29,6 +29,15 @@ const STATUSES = ['active', 'inactive', 'deactivated', 'pending_slot', 'refused'
 const bad = (message) => new KufarError('BAD_ARGS', message);
 const money = (v) => (Number(v) > 0 ? Number(v) / 100 : null);
 const link = (v) => (v ? String(v).replace(/^http:\/\//, 'https://') : null);
+const isObject = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const filled = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+
+// the moderator's words, when Kufar refused the listing
+function refusalOf(info) {
+  const reason = filled(info?.message?.ru, 300);
+  const details = filled(info?.description?.ru, 1000);
+  return reason === null && details === null ? {} : { refusal: { reason, details } };
+}
 
 function checkPage(limit, offset) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw bad('--limit: целое число от 1 до 100');
@@ -54,6 +63,12 @@ export function normalizeMyAd(raw) {
     phone_hidden: raw.flags?.phone_hidden === true,
     bumped: raw.flags?.bumped === true,
     image: thumb ? `https://rms.kufar.by/v1/gallery/${thumb}` : null,
+    can: {
+      activate: raw.permissions?.activate_perm === true,
+      prolong: raw.permissions?.prolong_perm === true,
+      delete: raw.permissions?.delete_perm === true,
+    },
+    ...refusalOf(raw.moderation_info),
   };
 }
 
@@ -163,4 +178,25 @@ export async function sendTarget(transport, id) {
   const c = normalizeConversation(raw.conversation_info);
   if (c.blocked) throw new KufarError('CHAT_BLOCKED', 'Диалог заблокирован, написать в него нельзя');
   return { conversation_id: id, to: c.with, ad: c.ad };
+}
+
+export async function newDialogTarget(transport, adId) {
+  let found = null;
+  try {
+    found = await transport.getJson(`/messaging-api/v1/conversations/check/${adId}`);
+  } catch (e) {
+    // 404: there is no dialog on this listing yet
+    if (e.code !== 'NOT_FOUND') throw e;
+  }
+  if (typeof found?.conversation_id === 'string') {
+    throw new KufarError('DIALOG_EXISTS', 'По этому объявлению диалог уже есть: отвечайте в нём командой send <id>',
+      { conversation_id: found.conversation_id });
+  }
+  const raw = await transport.getJson(`/messaging-api/v3/conversations/info/${adId}`);
+  const info = raw?.ad_info;
+  if (!isObject(info)) throw new KufarError('BAD_RESPONSE', 'В ответе Куфара нет данных объявления');
+  return {
+    ad: { id: String(info.id), title: info.subject ?? null, price_byn: money(info.price_byn), url: link(info.link) },
+    to: raw.participant_info?.name ?? null,
+  };
 }

@@ -15,12 +15,13 @@ import {
 import { saveToken, loadToken, authStatus, logout, sweepIdleKey, idleError } from './lib/auth.mjs';
 import { startLogin, runLoginWorker, loginWindowStatus, stopLoginWindow, sweepLoginProfiles } from './lib/browser.mjs';
 import { requestCode, confirmCode } from './lib/codelogin.mjs';
-import { myListings, inbox, chat, sendTarget } from './lib/account.mjs';
-import { checkText, hasKey, confirmCode as previewCode, sendMessage } from './lib/chatsend.mjs';
+import { myListings, inbox, chat, sendTarget, newDialogTarget } from './lib/account.mjs';
+import { checkText, hasKey, confirmCode as previewCode, sendMessage, styleFlags } from './lib/chatsend.mjs';
 import { UUID_RE } from './lib/transport.mjs';
 import { resolveForm, findFormValues, typeField } from './lib/form.mjs';
-import { SERVICE_KEYS, buildAd, maskContact, maskEmail, photoInfo, postCode, submitAd } from './lib/post.mjs';
+import { SERVICE_KEYS, buildAd, maskContact, maskEmail, photoInfo, postCode, submitAd, titleHints } from './lib/post.mjs';
 import { editSupport, editUnsupported, buildEdit, editCode, submitEdit } from './lib/edit.mjs';
+import { manageRequest, manageCode, manageAd } from './lib/manage.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const bad = (message, details) => new KufarError('BAD_ARGS', message, details);
@@ -187,21 +188,43 @@ async function getClockCtx() {
 
 const SEND_NEXT = 'Покажите пользователю, кому и что уходит. После его согласия повторите команду с тем же текстом и --confirm <код>';
 
+const SEND_OPTIONS = { text: { type: 'string' }, ad: { type: 'string' }, confirm: { type: 'string' } };
+
 async function send(args) {
-  const { values, arg: id } = parse(args, { text: { type: 'string' }, confirm: { type: 'string' } }, 1);
-  if (!UUID_RE.test(id)) throw bad('Нужен номер диалога (id из inbox)');
+  // a dialog id or --ad, so the count of arguments is checked here, not by parse
+  let r;
+  try {
+    r = parseArgs({ args, options: SEND_OPTIONS, allowPositionals: true, strict: true });
+  } catch (e) {
+    throw bad(`Неверные аргументы: ${e.message}`);
+  }
+  const { values } = r;
+  const [id, ...extra] = r.positionals;
+  const adId = values.ad;
+  if (extra.length || (id === undefined) === (adId === undefined)) {
+    throw bad('Нужен номер диалога (id из inbox) либо --ad <id объявления>, одно из двух');
+  }
+  if (adId === undefined && !UUID_RE.test(id)) throw bad('Нужен номер диалога (id из inbox)');
+  if (adId !== undefined && !/^\d+$/.test(adId)) throw bad('--ad: номер объявления из цифр');
   if (values.text === undefined) throw bad('Нужен текст: --text "<текст>"');
   if (values.confirm !== undefined && !/^[0-9a-f]{12}$/.test(values.confirm)) throw bad('--confirm: код из 12 знаков 0-9a-f из предпросмотра');
   const ctx = getCtx();
   const token = await ctx.getToken();
   const text = checkText(values.text, token);
-  const target = await sendTarget(ctx.transport, id);
-  const code = previewCode(id, text);
+  const target = adId === undefined ? await sendTarget(ctx.transport, id) : await newDialogTarget(ctx.transport, adId);
+  const code = adId === undefined ? previewCode(id, text) : previewCode(`ad:${adId}`, text);
   if (values.confirm === undefined) {
-    return { sent: false, preview: { ...target, text, chars: text.length }, confirm: code, next: SEND_NEXT };
+    const style = styleFlags(text);
+    const shown = { text, chars: text.length, ...(style.length ? { style } : {}) };
+    const preview = adId === undefined ? { ...target, ...shown } : { first_message: true, ...target, ...shown };
+    return { sent: false, preview, confirm: code, next: SEND_NEXT };
   }
   if (values.confirm !== code) {
     throw new KufarError('CONFIRM_MISMATCH', 'Диалог или текст не совпадают с предпросмотром. Покажите пользователю новый предпросмотр');
+  }
+  if (adId !== undefined) {
+    const sent = await sendMessage({ token, adId, text });
+    return { sent: true, ad_id: adId, to: target.to, ...sent };
   }
   const { message_id, at } = await sendMessage({ token, conversationId: id, text });
   return { sent: true, conversation_id: id, to: target.to, message_id, at };
@@ -252,6 +275,12 @@ async function form(args) {
   if (v.find !== undefined) return { cat, values: findFormValues(all, v.find) };
   return { cat, set, fields: resolveForm(bootstrap, values), next: FORM_NEXT };
 }
+
+// the title hints sit next to the subject in a preview, and only when there are some
+const hintsOf = (subject) => {
+  const hints = titleHints(subject);
+  return hints.length ? { title_hints: hints } : {};
+};
 
 const POST_NEXT = 'Покажите пользователю объявление целиком. После его согласия повторите команду с тем же черновиком и --confirm <код>';
 const POST_NOTE = 'Куфар принял объявление. Платные услуги утилита не подключала. Статус смотрите командой my';
@@ -315,6 +344,7 @@ async function post(args) {
       preview: {
         category: { id: ad.category, name: flattenCategories(tree).find((c) => c.id === ad.category)?.name },
         subject: ad.subject,
+        ...hintsOf(ad.subject),
         body: ad.body,
         price_byn: Number(ad.price) / 100,
         fields: shown.map((f) => previewField(f, ad[f.name])),
@@ -406,6 +436,7 @@ async function edit(args) {
           return { name: c.name, label: f.label, from: shown(f, c.from), to: shown(f, c.to) };
         }),
         subject: ad.subject,
+        ...hintsOf(ad.subject),
         body: ad.body,
         ...(ad.currency === 'BYR' && ad.price !== undefined ? { price_byn: Number(ad.price) / 100 } : {}),
         photos: photos.map((p) => (p.path
@@ -420,8 +451,51 @@ async function edit(args) {
   if (v.confirm !== code) {
     throw new KufarError('CONFIRM_MISMATCH', 'Правка или фото не совпадают с предпросмотром. Покажите пользователю новый предпросмотр');
   }
-  await submitEdit({ token, id, ad, photos });
+  await submitEdit({ token, id, ad, photos, stateDir: ctx.stateDir, code });
   return { edited: true, id, note: EDIT_NOTE };
+}
+
+const MANAGE_OPTIONS = {
+  reason: { type: 'string' }, duration: { type: 'string' }, comment: { type: 'string' }, confirm: { type: 'string' },
+};
+const MANAGE_EFFECT = {
+  off: 'Объявление будет снято с Куфара. Вернуть его можно командой manage activate, пока Куфар это разрешает',
+  activate: 'Объявление вернётся на Куфар',
+  prolong: 'Объявление вернётся на Куфар на 14 дней, бесплатно',
+  delete: 'Объявление будет удалено с Куфара навсегда, восстановить его нельзя',
+};
+const MANAGE_NEXT = 'Покажите пользователю, что будет сделано. После его согласия повторите команду с --confirm <код>';
+const MANAGE_NOTE = 'Куфар принял. Изменение появляется в течение нескольких минут: проверьте командой my';
+
+async function manage(args) {
+  const [action, ...rest] = args;
+  const { values: v, arg: id } = parse(rest, MANAGE_OPTIONS, 1);
+  if (!/^\d+$/.test(id)) throw bad('Нужен номер своего объявления (id из my)');
+  if (v.confirm !== undefined && !/^[0-9a-f]{12}$/.test(v.confirm)) throw bad('--confirm: код из 12 знаков 0-9a-f из предпросмотра');
+  const request = manageRequest({ action, reason: v.reason, duration: v.duration, comment: v.comment });
+  const ctx = getCtx();
+  const token = await ctx.getToken();
+  if (request.body && hasKey(request.body.comment, token)) {
+    throw new KufarError('TEXT_HAS_KEY', 'В комментарии есть ключ входа. Такой комментарий утилита не отправляет');
+  }
+  const saved = (await ctx.transport.getJson(`/insertion/v1/processing/load/${id}`))?.result;
+  if (!isObject(saved)) throw new KufarError('BAD_RESPONSE', 'Куфар вернул объявление в неожиданном виде');
+  const code = manageCode(id, request);
+
+  if (v.confirm === undefined) {
+    const given = Object.entries(request.body ?? {}).filter(([, x]) => x !== '');
+    return {
+      done: false,
+      preview: { action, id, subject: saved.subject ?? null, ...Object.fromEntries(given), effect: MANAGE_EFFECT[action] },
+      confirm: code,
+      next: MANAGE_NEXT,
+    };
+  }
+  if (v.confirm !== code) {
+    throw new KufarError('CONFIRM_MISMATCH', 'Действие не совпадает с предпросмотром. Покажите пользователю новый предпросмотр');
+  }
+  await manageAd({ token, id, request });
+  return { done: true, action, id, note: MANAGE_NOTE };
 }
 
 async function run(argv) {
@@ -537,8 +611,10 @@ async function run(argv) {
       return post(rest);
     case 'edit':
       return edit(rest);
+    case 'manage':
+      return manage(rest);
     default:
-      throw bad('Команды: categories, params, search, item, price, form, post, edit, watch, track, login, logout, whoami, my, inbox, chat, send',
+      throw bad('Команды: categories, params, search, item, price, form, post, edit, manage, watch, track, login, logout, whoami, my, inbox, chat, send',
         { command: cmd ?? null });
   }
 }
