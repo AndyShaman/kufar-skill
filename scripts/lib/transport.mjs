@@ -13,6 +13,7 @@ const OPEN = [
   /^\/search-api\/v2\/item\/\d+\/rendered$/,
   /^\/category-tree\/v1\/category_tree$/,
   /^\/taxonomy-proxy\/v1\/dispatch$/,
+  /^\/insertion\/v1\/meta\/bootstrap$/,
 ];
 // paths under login: only these get the key, whatever the caller wants
 const UNDER_LOGIN = [

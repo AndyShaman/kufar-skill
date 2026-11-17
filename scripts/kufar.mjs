@@ -18,6 +18,7 @@ import { requestCode, confirmCode } from './lib/codelogin.mjs';
 import { myListings, inbox, chat, sendTarget } from './lib/account.mjs';
 import { checkText, confirmCode as previewCode, sendMessage } from './lib/chatsend.mjs';
 import { UUID_RE } from './lib/transport.mjs';
+import { resolveForm, findFormValues } from './lib/form.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const bad = (message, details) => new KufarError('BAD_ARGS', message, details);
@@ -207,6 +208,45 @@ async function send(args) {
 const categoryTree = (ctx) => cached(path.join(ctx.stateDir, 'cache', 'category-tree.json'), DAY,
   () => ctx.transport.getJson('/category-tree/v1/category_tree'));
 
+const FORM_NEXT = 'Поля с more: true открывают другие поля: повторите команду с --set имя=значение. '
+  + 'Длинные списки значений ищите через --find';
+const SETTABLE = new Set(['choice', 'choices', 'flag', 'external']);
+
+async function form(args) {
+  const { values: v } = parse(args, { cat: { type: 'string' }, set: { type: 'string', multiple: true }, find: { type: 'string' } });
+  // cat also names the cache file, so only digits
+  if (!/^\d+$/.test(v.cat ?? '')) throw bad('Нужна рубрика: --cat <номер>');
+  const set = {};
+  for (const item of v.set ?? []) {
+    const i = item.indexOf('=');
+    if (i < 1) throw bad('--set пишется как имя=значение', { set: item });
+    const name = item.slice(0, i);
+    if (name === 'category' || name === 'company_ad') throw bad(`--set ${name} ставит сама утилита`, { name });
+    set[name] = item.slice(i + 1);
+  }
+  if (v.find === '') throw bad('--find: нужен текст');
+  const ctx = getCtx();
+  const cat = v.cat;
+  const parent = parentOf(await categoryTree(ctx), cat);
+  if (!parent) throw bad('Нужна подрубрика: найдите её командой categories --find');
+  const bootstrap = await cached(path.join(ctx.stateDir, 'cache', `form-${cat}.json`), DAY,
+    () => ctx.transport.getJson('/insertion/v1/meta/bootstrap', {
+      application: 'ad_insertion', platform: 'web', routing: 'web_ad_insertion', parent, category: cat,
+      company_ad: '0', 'taxonomy-version': '2',
+    }));
+  const values = { category: cat, company_ad: '0', ...set };
+  const all = resolveForm(bootstrap, values, { full: true });
+  for (const [name, value] of Object.entries(set)) {
+    const field = all.find((x) => x.name === name);
+    const ok = field && SETTABLE.has(field.kind)
+      && (field.kind !== 'flag' || value === '0' || value === '1')
+      && (!field.values || field.values.some((x) => x.value === value));
+    if (!ok) throw bad('Такого поля или значения в форме этой рубрики нет', { name });
+  }
+  if (v.find !== undefined) return { cat, values: findFormValues(all, v.find) };
+  return { cat, set, fields: resolveForm(bootstrap, values), next: FORM_NEXT };
+}
+
 async function run(argv) {
   const [cmd, ...rest] = argv;
   // logout revokes the key on Kufar itself, an idle one included
@@ -314,8 +354,10 @@ async function run(argv) {
     }
     case 'send':
       return send(rest);
+    case 'form':
+      return form(rest);
     default:
-      throw bad('Команды: categories, params, search, item, price, watch, track, login, logout, whoami, my, inbox, chat, send',
+      throw bad('Команды: categories, params, search, item, price, form, watch, track, login, logout, whoami, my, inbox, chat, send',
         { command: cmd ?? null });
   }
 }
