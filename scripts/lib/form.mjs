@@ -41,16 +41,18 @@ function shape(ref, more, full) {
   return field;
 }
 
-export function resolveForm(bootstrap, values, { full = false } = {}) {
+const heavier = (a, b) => a[0] > b[0] || (a[0] === b[0] && a[1] > b[1]);
+
+// steps 1, 2 and 3: the active numbers in the order of the form, each with [conditions, index] of its heaviest satisfied rule
+function active(bootstrap, values) {
   const refs = bootstrap?.ad_metadata?.parameters?.refs;
   const rules = bootstrap?.ad_metadata?.parameters?.rules;
   const order = bootstrap?.ad_metadata?.parameters_order?.refs;
   if (!isObject(refs) || !Array.isArray(rules) || !isObject(order)) {
     throw new KufarError('BAD_RESPONSE', 'Куфар вернул описание формы в неожиданном виде');
   }
-  // number -> [conditions, index] of its heaviest satisfied rule; a later rule wins a tie
+  // a later rule wins a tie
   const weight = new Map();
-  const heavier = (a, b) => a[0] > b[0] || (a[0] === b[0] && a[1] > b[1]);
   const more = new Set();
   rules.forEach(({ rule = {}, refs: nums = [] }, i) => {
     const conds = Object.entries(rule);
@@ -61,15 +63,31 @@ export function resolveForm(bootstrap, values, { full = false } = {}) {
       if (refs[n] && (!cur || !heavier(cur, [conds.length, i]))) weight.set(String(n), [conds.length, i]);
     }
   });
-  const best = new Map(); // name -> number, in the order of first appearance
-  for (const n of Object.values(order).flat().map(String)) {
-    const ref = refs[n];
-    if (!weight.has(n) || !ref.ui_component?.type) continue;
-    if (SKIP.has(ref.name) || SKIP_PREFIX.some((p) => ref.name.startsWith(p))) continue;
-    const cur = best.get(ref.name);
-    if (cur === undefined || heavier(weight.get(n), weight.get(cur))) best.set(ref.name, n);
+  const nums = Object.values(order).flat().map(String).filter((n) => weight.has(n));
+  return { refs, weight, more, nums };
+}
+
+// step 5: name -> its heaviest number, in the order of first appearance
+function heaviest(nums, refs, weight) {
+  const best = new Map();
+  for (const n of nums) {
+    const cur = best.get(refs[n].name);
+    if (cur === undefined || heavier(weight.get(n), weight.get(cur))) best.set(refs[n].name, n);
   }
-  return [...best.values()].map((n) => shape(refs[n], more, full));
+  return best;
+}
+
+export function resolveForm(bootstrap, values, { full = false } = {}) {
+  const { refs, weight, more, nums } = active(bootstrap, values);
+  const shown = nums.filter((n) => refs[n].ui_component?.type
+    && !SKIP.has(refs[n].name) && !SKIP_PREFIX.some((p) => refs[n].name.startsWith(p)));
+  return [...heaviest(shown, refs, weight).values()].map((n) => shape(refs[n], more, full));
+}
+
+export function typeField(bootstrap, values) {
+  const { refs, weight, nums } = active(bootstrap, values);
+  const n = [...heaviest(nums, refs, weight).values()].find((x) => refs[x].is_type === true);
+  return n === undefined ? null : { name: refs[n].name, url_name: refs[n].url_name };
 }
 
 export function findFormValues(fields, text, limit = 30) {

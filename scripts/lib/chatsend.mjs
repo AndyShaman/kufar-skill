@@ -16,12 +16,16 @@ function hasToken(text, token) {
 }
 
 // a signal, not a guarantee: a key re-encoded or split finer is not seen
+export function hasKey(text, token) {
+  return KEY_SHAPE.test(text) || hasToken(text, token);
+}
+
 export function checkText(text, token) {
   if (typeof text !== 'string') throw bad('Нужен текст сообщения: --text "<текст>"');
   const t = text.trim();
   if (!t) throw bad('Текст сообщения пустой');
   if (t.length > MAX_TEXT) throw bad(`Текст сообщения длиннее ${MAX_TEXT} знаков`);
-  if (KEY_SHAPE.test(t) || hasToken(t, token)) {
+  if (hasKey(t, token)) {
     throw new KufarError('TEXT_HAS_KEY', 'В тексте есть ключ входа. Такое сообщение утилита не отправляет');
   }
   return t;

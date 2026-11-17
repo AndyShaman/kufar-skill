@@ -5,7 +5,7 @@ import { KufarError } from './lib/errors.mjs';
 import { resolveStateDir, cached } from './lib/storage.mjs';
 import { createTransport } from './lib/transport.mjs';
 import { fetchAd } from './lib/ads.mjs';
-import { findCategories, parentOf, listParams, findParamValues } from './lib/taxonomy.mjs';
+import { findCategories, flattenCategories, parentOf, listParams, findParamValues } from './lib/taxonomy.mjs';
 import { buildSearchQuery, search, flagAds } from './lib/search.mjs';
 import { loadClock } from './lib/clock.mjs';
 import { estimatePrice } from './lib/price.mjs';
@@ -16,9 +16,10 @@ import { saveToken, loadToken, authStatus, logout, sweepIdleKey, idleError } fro
 import { startLogin, runLoginWorker, loginWindowStatus, stopLoginWindow, sweepLoginProfiles } from './lib/browser.mjs';
 import { requestCode, confirmCode } from './lib/codelogin.mjs';
 import { myListings, inbox, chat, sendTarget } from './lib/account.mjs';
-import { checkText, confirmCode as previewCode, sendMessage } from './lib/chatsend.mjs';
+import { checkText, hasKey, confirmCode as previewCode, sendMessage } from './lib/chatsend.mjs';
 import { UUID_RE } from './lib/transport.mjs';
-import { resolveForm, findFormValues } from './lib/form.mjs';
+import { resolveForm, findFormValues, typeField } from './lib/form.mjs';
+import { SERVICE_KEYS, buildAd, maskContact, photoInfo, postCode, submitAd } from './lib/post.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const bad = (message, details) => new KufarError('BAD_ARGS', message, details);
@@ -208,6 +209,16 @@ async function send(args) {
 const categoryTree = (ctx) => cached(path.join(ctx.stateDir, 'cache', 'category-tree.json'), DAY,
   () => ctx.transport.getJson('/category-tree/v1/category_tree'));
 
+async function formBootstrap(ctx, tree, cat) {
+  const parent = parentOf(tree, cat);
+  if (!parent) throw bad('Нужна подрубрика: найдите её командой categories --find');
+  return cached(path.join(ctx.stateDir, 'cache', `form-${cat}.json`), DAY,
+    () => ctx.transport.getJson('/insertion/v1/meta/bootstrap', {
+      application: 'ad_insertion', platform: 'web', routing: 'web_ad_insertion', parent, category: cat,
+      company_ad: '0', 'taxonomy-version': '2',
+    }));
+}
+
 const FORM_NEXT = 'Поля с more: true открывают другие поля: повторите команду с --set имя=значение. '
   + 'Длинные списки значений ищите через --find';
 const SETTABLE = new Set(['choice', 'choices', 'flag', 'external']);
@@ -227,13 +238,7 @@ async function form(args) {
   if (v.find === '') throw bad('--find: нужен текст');
   const ctx = getCtx();
   const cat = v.cat;
-  const parent = parentOf(await categoryTree(ctx), cat);
-  if (!parent) throw bad('Нужна подрубрика: найдите её командой categories --find');
-  const bootstrap = await cached(path.join(ctx.stateDir, 'cache', `form-${cat}.json`), DAY,
-    () => ctx.transport.getJson('/insertion/v1/meta/bootstrap', {
-      application: 'ad_insertion', platform: 'web', routing: 'web_ad_insertion', parent, category: cat,
-      company_ad: '0', 'taxonomy-version': '2',
-    }));
+  const bootstrap = await formBootstrap(ctx, await categoryTree(ctx), cat);
   const values = { category: cat, company_ad: '0', ...set };
   const all = resolveForm(bootstrap, values, { full: true });
   for (const [name, value] of Object.entries(set)) {
@@ -245,6 +250,86 @@ async function form(args) {
   }
   if (v.find !== undefined) return { cat, values: findFormValues(all, v.find) };
   return { cat, set, fields: resolveForm(bootstrap, values), next: FORM_NEXT };
+}
+
+const POST_NEXT = 'Покажите пользователю объявление целиком. После его согласия повторите команду с тем же черновиком и --confirm <код>';
+const POST_NOTE = 'Куфар принял объявление. Платные услуги утилита не подключала. Статус смотрите командой my';
+const PENDING_NOTE = 'Куфар принял объявление, но бесплатный лимит рубрики исчерпан: оно ждёт оплаты и не опубликовано '
+  + '(my --status pending_slot). Платить не обязательно: его можно удалить на сайте';
+const TERMS = { currency: 'BYN', delivery: false, safe_deal: false, instalments: false, promotion: false };
+const draftInvalid = (fields) => new KufarError('DRAFT_INVALID', 'В черновике ошибки', { fields });
+
+async function readDraft(file) {
+  let draft;
+  try {
+    draft = JSON.parse(await fs.readFile(file, 'utf8'));
+  } catch { /* the text of the file is not repeated */ }
+  if (!draft || typeof draft !== 'object' || Array.isArray(draft)) throw bad('Черновик: файл JSON с одним объектом');
+  if (draft.category === undefined) throw draftInvalid({ category: 'required' });
+  // category also names the cache file, so only digits
+  if (typeof draft.category !== 'string' || !/^\d+$/.test(draft.category)) throw draftInvalid({ category: 'bad_value' });
+  return draft;
+}
+
+function previewField(field, value) {
+  const label = (x) => field.values?.find((y) => y.value === x)?.label ?? x;
+  const text = field.kind === 'flag' ? 'да' : Array.isArray(value) ? value.map(label).join(', ') : label(value);
+  return { name: field.name, label: field.label, value, text };
+}
+
+async function post(args) {
+  const { values: v } = parse(args, { draft: { type: 'string' }, confirm: { type: 'string' } });
+  if (v.draft === undefined) throw bad('Нужен черновик: --draft <файл.json>');
+  if (v.confirm !== undefined && !/^[0-9a-f]{12}$/.test(v.confirm)) throw bad('--confirm: код из 12 знаков 0-9a-f из предпросмотра');
+  const draft = await readDraft(v.draft);
+  const ctx = getCtx();
+  const token = await ctx.getToken();
+
+  const tree = await categoryTree(ctx);
+  const bootstrap = await formBootstrap(ctx, tree, draft.category);
+  const strings = Object.entries(draft).filter(([, x]) => typeof x === 'string').map(([k, x]) => [k, x.trim()]);
+  const values = { ...Object.fromEntries(strings), category: draft.category, company_ad: '0' };
+  const fields = resolveForm(bootstrap, values, { full: true });
+
+  const contact = { name: draft.name, phone: draft.phone, email: draft.email };
+  if (Object.values(contact).includes(undefined)) {
+    const items = await ctx.transport.getJson('/my-items-v2/v2/items', { status: 'active', limit: 1, offset: 0, stats: 1 });
+    const first = items?.ads?.[0];
+    for (const k of Object.keys(contact)) {
+      if (contact[k] === undefined && typeof first?.[k] === 'string' && first[k]) contact[k] = first[k];
+    }
+  }
+
+  const { ad, photos: files } = buildAd({ draft, fields, type: typeField(bootstrap, values), contact });
+  if (Object.values(ad).flat().some((x) => typeof x === 'string' && hasKey(x, token))) {
+    throw new KufarError('TEXT_HAS_KEY', 'В объявлении есть ключ входа. Такое объявление утилита не подаёт');
+  }
+  const photos = await photoInfo(files);
+  const code = postCode(ad, photos);
+
+  if (v.confirm === undefined) {
+    const shown = fields.filter((f) => !SERVICE_KEYS.has(f.name) && f.name !== 'subject' && f.name !== 'body' && ad[f.name] !== undefined);
+    return {
+      posted: false,
+      preview: {
+        category: { id: ad.category, name: flattenCategories(tree).find((c) => c.id === ad.category)?.name },
+        subject: ad.subject,
+        body: ad.body,
+        price_byn: Number(ad.price) / 100,
+        fields: shown.map((f) => previewField(f, ad[f.name])),
+        photos: photos.map((p) => ({ file: p.file, bytes: p.bytes })),
+        contact: maskContact(ad),
+        terms: TERMS,
+      },
+      confirm: code,
+      next: POST_NEXT,
+    };
+  }
+  if (v.confirm !== code) {
+    throw new KufarError('CONFIRM_MISMATCH', 'Объявление или фото не совпадают с предпросмотром. Покажите пользователю новый предпросмотр');
+  }
+  const r = await submitAd({ stateDir: ctx.stateDir, code, ad, photos, token });
+  return { posted: true, ad_id: r.ad_id, pending_slot: r.pending_slot, note: r.pending_slot ? PENDING_NOTE : POST_NOTE };
 }
 
 async function run(argv) {
@@ -356,8 +441,10 @@ async function run(argv) {
       return send(rest);
     case 'form':
       return form(rest);
+    case 'post':
+      return post(rest);
     default:
-      throw bad('Команды: categories, params, search, item, price, form, watch, track, login, logout, whoami, my, inbox, chat, send',
+      throw bad('Команды: categories, params, search, item, price, form, post, watch, track, login, logout, whoami, my, inbox, chat, send',
         { command: cmd ?? null });
   }
 }
