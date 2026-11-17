@@ -12,7 +12,7 @@ import { estimatePrice } from './lib/price.mjs';
 import {
   watchAdd, watchCheck, watchList, watchRemove, trackAdd, trackCheck, trackList, trackRemove,
 } from './lib/watch.mjs';
-import { saveToken, loadToken, authStatus, logout } from './lib/auth.mjs';
+import { saveToken, loadToken, authStatus, logout, sweepIdleKey, idleError } from './lib/auth.mjs';
 import { startLogin, runLoginWorker, loginWindowStatus, stopLoginWindow, sweepLoginProfiles } from './lib/browser.mjs';
 import { requestCode, confirmCode } from './lib/codelogin.mjs';
 import { myListings, inbox, chat } from './lib/account.mjs';
@@ -157,10 +157,22 @@ function filterOpts(v) {
   };
 }
 
+// set by the idle check at the start of run(): the key was removed in this very run
+let idleRemoved = false;
+
 function getCtx() {
   const stateDir = resolveStateDir();
   const now = Date.now;
-  return { stateDir, transport: createTransport({ stateDir, getToken: () => loadToken(stateDir, now) }), now };
+  const getToken = () => (idleRemoved ? Promise.reject(idleError()) : loadToken(stateDir, now));
+  return { stateDir, transport: createTransport({ stateDir, getToken }), now };
+}
+
+async function sweepIdle() {
+  try {
+    return await sweepIdleKey(resolveStateDir());
+  } catch {
+    return false;
+  }
 }
 
 async function getClockCtx() {
@@ -173,6 +185,8 @@ const categoryTree = (ctx) => cached(path.join(ctx.stateDir, 'cache', 'category-
 
 async function run(argv) {
   const [cmd, ...rest] = argv;
+  // logout revokes the key on Kufar itself, an idle one included
+  if (cmd !== 'logout') idleRemoved = await sweepIdle();
   switch (cmd) {
     case 'categories': {
       const { values } = parse(rest, { find: { type: 'string' } });
@@ -258,8 +272,9 @@ async function run(argv) {
       const status = await authStatus(stateDir);
       // the path is for moving the key to a server; the content is never printed
       if (status.logged_in) return { ...status, auth_file: path.resolve(stateDir, 'auth.json') };
+      const shown = idleRemoved ? { ...status, idle_removed: true } : status;
       const loginState = await loginWindowStatus(stateDir);
-      return loginState ? { ...status, login: loginState } : status;
+      return loginState ? { ...shown, login: loginState } : shown;
     }
     case 'my': {
       const { values } = parse(rest, { status: { type: 'string' }, ...PAGE_OPTIONS });
@@ -288,6 +303,13 @@ const hide = (v) => {
   return v;
 };
 
+// the agent's sandbox may close the state dir to a command that is not run on its own
+const STATE_BLOCKED = {
+  code: 'STATE_BLOCKED',
+  message: 'Нет доступа к папке состояния. Если чтение папки закрыто настройками агента, запустите утилиту отдельной командой, '
+    + 'без |, cd, перенаправлений и переменных перед ней; login --token-stdin при таком запрете выполняет сам пользователь',
+};
+
 const print = (obj) => process.stdout.write(`${JSON.stringify(obj, (k, v) => (k === 'seller_key' ? undefined : v), 2)}\n`);
 
 if (process.argv[2] === 'login-worker') await loginWorker(process.argv.slice(3));
@@ -295,8 +317,10 @@ if (process.argv[2] === 'login-worker') await loginWorker(process.argv.slice(3))
 try {
   print(await run(process.argv.slice(2)));
 } catch (e) {
-  print({ error: e instanceof KufarError
-    ? { code: e.code, message: hide(e.message), details: hide(e.details) }
-    : { code: 'INTERNAL', message: hide(String(e?.message ?? e)) } });
+  let error;
+  if (e instanceof KufarError) error = { code: e.code, message: hide(e.message), details: hide(e.details) };
+  else if (e?.code === 'EPERM' || e?.code === 'EACCES') error = STATE_BLOCKED;
+  else error = { code: 'INTERNAL', message: hide(String(e?.message ?? e)) };
+  print({ error });
   process.exitCode = 1;
 }
