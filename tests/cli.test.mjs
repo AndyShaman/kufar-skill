@@ -626,3 +626,90 @@ test('login --token-stdin with the token as an argument too -> BAD_ARGS and the 
   assert.equal(r.json.error.code, 'BAD_ARGS');
   assert.ok(!r.stdout.includes(token));
 });
+
+// ---- idle key and blocked state dir (no network) ----
+
+const DAY_MS = 86_400_000;
+const nonExistent = (file) => !fsSync.existsSync(file);
+
+// state dir with a live key last used `idleDays` ago, on the real clock
+async function idleDir({ idleDays = 31, expired = false, withUse = true } = {}) {
+  const dir = await tmpDir();
+  const token = expired ? makeToken(Math.floor(Date.now() / 1000) - 86400) : liveToken();
+  await fs.writeFile(path.join(dir, 'auth.json'), JSON.stringify({ token, exp: Date.now() + 30 * DAY_MS, saved_at: Date.now() - idleDays * DAY_MS }));
+  if (withUse) await fs.writeFile(path.join(dir, 'auth-use.json'), JSON.stringify({ used_at: Date.now() - idleDays * DAY_MS }));
+  return { dir, token };
+}
+
+test('track list with an idle key: the usual answer, auth.json and auth-use.json are removed', async () => {
+  const { dir } = await idleDir();
+  const r = runIn(dir, ['track', 'list']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(r.json, { tracked: [] });
+  assert.ok(nonExistent(path.join(dir, 'auth.json')));
+  assert.ok(nonExistent(path.join(dir, 'auth-use.json')));
+});
+
+test('track list with a fresh key: auth.json stays', async () => {
+  const { dir } = await idleDir({ idleDays: 1 });
+  const r = runIn(dir, ['track', 'list']);
+  assert.equal(r.status, 0);
+  assert.ok(fsSync.existsSync(path.join(dir, 'auth.json')));
+});
+
+test('whoami with an idle key -> { logged_in: false, idle_removed: true }', async () => {
+  const { dir, token } = await idleDir();
+  const r = runIn(dir, ['whoami']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(r.json, { logged_in: false, idle_removed: true });
+  assert.ok(!r.stdout.includes(token));
+});
+
+test('my with an idle key -> AUTH_IDLE, exit 1, no key in the output', async () => {
+  const { dir, token } = await idleDir();
+  const r = runIn(dir, ['my']);
+  assert.equal(r.status, 1);
+  assert.equal(r.json.error.code, 'AUTH_IDLE');
+  assert.ok(!r.stdout.includes(token));
+});
+
+test('chat not-a-uuid with an idle key -> BAD_ARGS', async () => {
+  const { dir } = await idleDir();
+  const r = runIn(dir, ['chat', 'not-a-uuid']);
+  assert.equal(r.status, 1);
+  assert.equal(r.json.error.code, 'BAD_ARGS');
+});
+
+test('whoami after login --token-stdin shows idle_days_left', async () => {
+  const dir = await tmpDir();
+  runIn(dir, ['login', '--token-stdin'], liveToken());
+  const who = runIn(dir, ['whoami']);
+  assert.equal(who.json.logged_in, true);
+  assert.ok(who.json.idle_days_left >= 29 && who.json.idle_days_left <= 30, String(who.json.idle_days_left));
+});
+
+test('logout with an idle and expired key works as before: no network, files removed, logged_in false', async () => {
+  const { dir } = await idleDir({ expired: true });
+  const r = runIn(dir, ['logout']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(r.json, { logged_in: false });
+  assert.ok(nonExistent(path.join(dir, 'auth.json')));
+  assert.ok(nonExistent(path.join(dir, 'auth-use.json')));
+});
+
+const CANT_CHMOD = process.getuid?.() === 0 || process.platform === 'win32';
+for (const args of [['whoami'], ['track', 'list']]) {
+  test(`kufar ${args.join(' ')} with a state dir of permissions 000 -> STATE_BLOCKED, no path in the output`, { skip: CANT_CHMOD && 'permissions are not enforced here' }, async () => {
+    const dir = await tmpDir();
+    await fs.chmod(dir, 0o000);
+    try {
+      const r = runIn(dir, args);
+      assert.equal(r.status, 1);
+      assert.equal(r.json?.error?.code, 'STATE_BLOCKED', r.stdout);
+      assert.ok(!r.stdout.includes(dir), 'the state dir path is in the output');
+    } finally {
+      await fs.chmod(dir, 0o700);
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+}

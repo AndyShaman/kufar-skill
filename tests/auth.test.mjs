@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   parseToken, saveToken, loadToken, authStatus, logout,
 } from '../scripts/lib/auth.mjs';
+import * as authMod from '../scripts/lib/auth.mjs';
 import {
   tmpDir, rejectsCode, throwsCode, NOW, DAY, makeToken, goodToken, GOOD_EXP_SEC, errText,
   liveToken, fakeFetch, emptyRes, jsonRes, headersOf, assertNoSignoutAll,
@@ -79,7 +80,7 @@ test('saveToken writes auth.json with mode 0600 and returns status without the t
   const t = goodToken();
   const status = await saveToken(dir, t, now);
   assert.deepEqual(status, {
-    logged_in: true, expires_at: new Date(GOOD_EXP_SEC * 1000).toISOString(), days_left: 30,
+    logged_in: true, expires_at: new Date(GOOD_EXP_SEC * 1000).toISOString(), days_left: 30, idle_days_left: 30,
   });
   assert.ok(!JSON.stringify(status).includes(t));
   const st = await fs.stat(authFile(dir));
@@ -174,7 +175,7 @@ test('authStatus: days_left is floored and expires_at is ISO', async () => {
   const expMs = NOW + 3 * DAY + 5 * 3_600_000;
   await writeAuth(dir, { token: makeToken(expMs / 1000), exp: 0, saved_at: NOW });
   assert.deepEqual(await authStatus(dir, now), {
-    logged_in: true, expires_at: new Date(expMs).toISOString(), days_left: 3,
+    logged_in: true, expires_at: new Date(expMs).toISOString(), days_left: 3, idle_days_left: 30,
   });
 });
 
@@ -402,4 +403,250 @@ test('logout: auth.json that is not JSON -> no network, file removed, logged_in 
 test('logout: a missing state dir is not an error', async () => {
   const base = await tmpDir();
   assert.deepEqual(await logout(path.join(base, 'nope'), { fetchImpl: fakeFetch(() => emptyRes(204)) }), { logged_in: false });
+});
+
+// ---- idle key: use mark, loadToken / authStatus / saveToken / sweepIdleKey / logout ----
+
+const IDLE = 30 * DAY;
+const useFile = (dir) => path.join(dir, 'auth-use.json');
+const windowFile = (dir) => path.join(dir, 'login-window.json');
+const writeUse = (dir, used_at) => fs.writeFile(useFile(dir), JSON.stringify({ used_at }));
+const readUse = async (dir) => JSON.parse(await fs.readFile(useFile(dir), 'utf8'));
+const exists = (file) => fs.stat(file).then(() => true, () => false);
+const listing = async (dir) => Object.fromEntries(await Promise.all(
+  (await fs.readdir(dir)).sort().map(async (f) => [f, await fs.readFile(path.join(dir, f), 'utf8')]),
+));
+
+// state dir with a saved key; savedAgo is in ms before NOW, expired makes the key itself expired at NOW
+async function keyDir({ savedAgo, usedAgo, expired = false } = {}) {
+  const dir = await tmpDir();
+  const token = expired ? makeToken(Math.floor((NOW - DAY) / 1000)) : goodToken();
+  const data = { token, exp: GOOD_EXP_SEC * 1000 };
+  if (savedAgo !== undefined) data.saved_at = NOW - savedAgo;
+  await writeAuth(dir, data);
+  if (usedAgo !== undefined) await writeUse(dir, NOW - usedAgo);
+  return { dir, token };
+}
+
+test('IDLE_MS is 30 days', () => {
+  assert.equal(authMod.IDLE_MS, 30 * DAY);
+});
+
+test('loadToken: a fresh key is returned and auth-use.json gets used_at now', async () => {
+  const dir = await tmpDir();
+  const t = goodToken();
+  await saveToken(dir, t, now);
+  assert.equal(await loadToken(dir, now), t);
+  assert.deepEqual(await readUse(dir), { used_at: NOW });
+});
+
+test('loadToken: the use mark is not rewritten within the hour, rewritten after an hour and more', async () => {
+  const dir = await tmpDir();
+  await saveToken(dir, goodToken(), now);
+  await loadToken(dir, now);
+  await loadToken(dir, () => NOW + 600_000);
+  assert.deepEqual(await readUse(dir), { used_at: NOW });
+  await loadToken(dir, () => NOW + 3_600_000);
+  assert.deepEqual(await readUse(dir), { used_at: NOW + 3_600_000 });
+  await loadToken(dir, () => NOW + 3_600_000 + 7_200_000);
+  assert.deepEqual(await readUse(dir), { used_at: NOW + 3_600_000 + 7_200_000 });
+});
+
+test('loadToken: a use mark from the future is rewritten with now', async () => {
+  const { dir } = await keyDir({ savedAgo: 0 });
+  await writeUse(dir, NOW + DAY);
+  await loadToken(dir, now);
+  assert.deepEqual(await readUse(dir), { used_at: NOW });
+});
+
+test('loadToken: a use mark that is not a number is rewritten with now', async () => {
+  const { dir } = await keyDir({ savedAgo: 0 });
+  await fs.writeFile(useFile(dir), JSON.stringify({ used_at: 'yesterday' }));
+  await loadToken(dir, now);
+  assert.deepEqual(await readUse(dir), { used_at: NOW });
+});
+
+test('loadToken: saved 30 days ago and no mark is AUTH_IDLE, nothing is written', async () => {
+  const { dir } = await keyDir({ savedAgo: IDLE });
+  const before = await listing(dir);
+  await rejectsCode(loadToken(dir, now), 'AUTH_IDLE');
+  assert.deepEqual(await listing(dir), before);
+});
+
+test('loadToken: saved 40 days ago but used a day ago gives the key', async () => {
+  const { dir, token } = await keyDir({ savedAgo: 40 * DAY, usedAgo: DAY });
+  assert.equal(await loadToken(dir, now), token);
+});
+
+test('loadToken: saved 29 days 23 hours ago gives the key', async () => {
+  const { dir, token } = await keyDir({ savedAgo: IDLE - 3_600_000 });
+  assert.equal(await loadToken(dir, now), token);
+});
+
+test('loadToken: no saved_at and no mark is AUTH_IDLE', async () => {
+  const { dir } = await keyDir();
+  await rejectsCode(loadToken(dir, now), 'AUTH_IDLE');
+});
+
+test('loadToken: an expired and idle key is AUTH_EXPIRED (expiry is checked first)', async () => {
+  const { dir } = await keyDir({ savedAgo: 40 * DAY, expired: true });
+  await rejectsCode(loadToken(dir, now), 'AUTH_EXPIRED');
+});
+
+test('loadToken: AUTH_IDLE does not contain the key', async () => {
+  const { dir, token } = await keyDir({ savedAgo: IDLE });
+  await assert.rejects(loadToken(dir, now), (e) => {
+    assert.equal(e.code, 'AUTH_IDLE');
+    assert.ok(!errText(e).includes(token));
+    assert.ok(!e.message.includes(token));
+    return true;
+  });
+});
+
+test('saveToken removes auth-use.json of the previous key', async () => {
+  const dir = await tmpDir();
+  await writeUse(dir, NOW - DAY);
+  await saveToken(dir, goodToken(), now);
+  await gone(useFile(dir));
+});
+
+test('authStatus: idle_days_left counts from the last use, by the formula', async () => {
+  const { dir } = await keyDir({ savedAgo: 40 * DAY, usedAgo: 10 * DAY });
+  const s = await authStatus(dir, now);
+  assert.equal(s.logged_in, true);
+  assert.equal(s.idle_days_left, Math.floor((NOW - 10 * DAY + IDLE - NOW) / DAY));
+});
+
+test('authStatus: an idle key is { logged_in: false, idle: true }', async () => {
+  const { dir } = await keyDir({ savedAgo: IDLE });
+  assert.deepEqual(await authStatus(dir, now), { logged_in: false, idle: true });
+});
+
+test('authStatus: writes no files, for a fresh and for an idle key', async () => {
+  for (const savedAgo of [0, IDLE]) {
+    const { dir } = await keyDir({ savedAgo });
+    const before = await listing(dir);
+    await authStatus(dir, now);
+    assert.deepEqual(await listing(dir), before);
+  }
+});
+
+test('sweepIdleKey: no file -> false, nothing created', async () => {
+  const dir = await tmpDir();
+  assert.equal(await authMod.sweepIdleKey(dir, now), false);
+  assert.deepEqual(await fs.readdir(dir), []);
+});
+
+test('sweepIdleKey: a broken auth.json -> false, file stays', async () => {
+  const dir = await tmpDir();
+  await fs.writeFile(authFile(dir), 'not json at all');
+  assert.equal(await authMod.sweepIdleKey(dir, now), false);
+  assert.equal(await fs.readFile(authFile(dir), 'utf8'), 'not json at all');
+});
+
+test('sweepIdleKey: a token that fails parseToken -> false, files stay, even with an old saved_at', async () => {
+  const dir = await tmpDir();
+  await writeAuth(dir, { token: 'garbage', exp: GOOD_EXP_SEC * 1000, saved_at: NOW - 40 * DAY });
+  await writeUse(dir, NOW - 40 * DAY);
+  assert.equal(await authMod.sweepIdleKey(dir, now), false);
+  assert.ok(await exists(authFile(dir)));
+  assert.ok(await exists(useFile(dir)));
+});
+
+test('sweepIdleKey: a key in use -> false, files stay', async () => {
+  const { dir } = await keyDir({ savedAgo: 40 * DAY, usedAgo: DAY });
+  const before = await listing(dir);
+  assert.equal(await authMod.sweepIdleKey(dir, now), false);
+  assert.deepEqual(await listing(dir), before);
+});
+
+test('sweepIdleKey: an idle valid key -> true, auth.json and auth-use.json are removed', async () => {
+  const { dir } = await keyDir({ savedAgo: 40 * DAY, usedAgo: IDLE });
+  assert.equal(await authMod.sweepIdleKey(dir, now), true);
+  await gone(authFile(dir));
+  await gone(useFile(dir));
+});
+
+test('sweepIdleKey: an idle key without a use mark -> true, auth.json is removed', async () => {
+  const { dir } = await keyDir({ savedAgo: IDLE });
+  assert.equal(await authMod.sweepIdleKey(dir, now), true);
+  await gone(authFile(dir));
+});
+
+test('sweepIdleKey: an idle expired key -> true, auth.json and auth-use.json are removed', async () => {
+  const { dir } = await keyDir({ savedAgo: 40 * DAY, usedAgo: 35 * DAY, expired: true });
+  assert.equal(await authMod.sweepIdleKey(dir, now), true);
+  await gone(authFile(dir));
+  await gone(useFile(dir));
+});
+
+test('sweepIdleKey: saved_at from the future -> false, key stays, auth-use.json holds used_at now', async () => {
+  const { dir } = await keyDir({ savedAgo: -DAY });
+  assert.equal(await authMod.sweepIdleKey(dir, now), false);
+  assert.ok(await exists(authFile(dir)));
+  assert.deepEqual(await readUse(dir), { used_at: NOW });
+});
+
+test('sweepIdleKey: login-pending.json and login-window.json stay in every outcome', async () => {
+  const setups = [
+    () => keyDir({ savedAgo: IDLE }),
+    () => keyDir({ savedAgo: 40 * DAY, expired: true }),
+    () => keyDir({ savedAgo: 0 }),
+    () => keyDir({ savedAgo: -DAY }),
+    async () => ({ dir: await tmpDir() }),
+  ];
+  for (const setup of setups) {
+    const { dir } = await setup();
+    await writePending(dir);
+    await fs.writeFile(windowFile(dir), JSON.stringify({ state: 'waiting' }));
+    await authMod.sweepIdleKey(dir, now);
+    assert.ok(await exists(pendingFile(dir)));
+    assert.ok(await exists(windowFile(dir)));
+  }
+});
+
+test('sweepIdleKey does not touch the network', async () => {
+  const { dir } = await keyDir({ savedAgo: IDLE });
+  const real = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = () => { calls += 1; throw new Error('network must not be used'); };
+  try {
+    assert.equal(await authMod.sweepIdleKey(dir, now), true);
+  } finally {
+    globalThis.fetch = real;
+  }
+  assert.equal(calls, 0);
+});
+
+test('sweepIdleKey: a missing state dir -> false, nothing thrown', async () => {
+  const base = await tmpDir();
+  assert.equal(await authMod.sweepIdleKey(path.join(base, 'nope'), now), false);
+});
+
+for (const [name, status] of [['204', 204], ['401', 401]]) {
+  test(`logout: answer ${name} also removes auth-use.json`, async () => {
+    const { dir } = await loggedIn();
+    await writeUse(dir, Date.now());
+    await logout(dir, { fetchImpl: fakeFetch(() => emptyRes(status)) });
+    await gone(authFile(dir));
+    await gone(useFile(dir));
+  });
+}
+
+test('logout: an expired key also removes auth-use.json (no network)', async () => {
+  const dir = await tmpDir();
+  await writeAuth(dir, { token: makeToken(Math.floor((Date.now() - DAY) / 1000)), exp: Date.now() + DAY });
+  await writeUse(dir, Date.now());
+  const fetchImpl = fakeFetch(() => { throw new Error('network must not be used'); });
+  await logout(dir, { fetchImpl });
+  await gone(authFile(dir));
+  await gone(useFile(dir));
+});
+
+test('logout: no key also removes auth-use.json', async () => {
+  const dir = await tmpDir();
+  await writeUse(dir, Date.now());
+  const fetchImpl = fakeFetch(() => { throw new Error('network must not be used'); });
+  await logout(dir, { fetchImpl });
+  await gone(useFile(dir));
 });
