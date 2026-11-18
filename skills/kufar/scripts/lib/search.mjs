@@ -11,10 +11,13 @@ const SUSPECT_WORDS = ['запчаст', 'на разбор', 'на детали
 // A defect the text denies («не заблокирован», «без трещин», «трещин нет») is not one; neither are spare parts that come with the thing
 const DENIED = '(?<!(?:^|[^а-яё])(?:не|ни|без|нет)\\s+)';
 const DEFECT_TEXT = new RegExp([
-  '(?:на|под|по)\\s+запчаст', 'по\\s+частям', '(?:на|под)\\s+разбор', 'на\\s+детали', '(?:на|под)\\s+восстановлени', '(?:под|нужен)\\s+ремонт',
-  'донор', 'нерабоч', 'забыт\\s+пароль', 'пароль[^.!?]{0,40}неизвест',
-  'требу[ею]т(?:ся)?\\s+ремонт', 'не\\s+включается', 'не\\s+работа[ею]т', 'не\\s+реагиру[ею]т', 'не\\s+заводится', 'не\\s+на\\s+ходу',
-  'после\\s+дтп', `(?<![а-яё])${DENIED}(?:заблокирован|залочен|локнут|разбит|сломан|тресну|трещин|поврежд|вздут|неисправ|(?<!\\d[\\s-]?)бит(?:ый|ая|ое|ые|а|о|ы)?(?![а-яё]))(?![а-яё]*\\s+нет(?![а-яё]))`,
+  `(?<![а-яё])${DENIED}(?:(?:на|под|по)\\s+запчаст|(?:на|под)\\s+разбор|на\\s+детали|(?:на|под)\\s+восстановлени|(?:под|нужен)\\s+ремонт|под\\s+замену`
+    + '|донор|нерабоч(?![а-яё]*\\s+(?:время|дни|день))|требу[ею]т(?:ся)?\\s+ремонт|после\\s+дтп)',
+  'забыт\\s+пароль', 'пароль[^.!?]{0,40}неизвест',
+  // «оплата по частям» is about money, not about the thing
+  '(?<!(?:плат|рассроч|взнос)[а-яё]*[^.!?]{0,20})по\\s+частям',
+  'не\\s+включается', 'не\\s+работа[ею]т', 'не\\s+реагиру[ею]т', 'не\\s+заводится', 'не\\s+на\\s+ходу',
+  `(?<![а-яё])${DENIED}(?:заблокирован|залочен|локнут|разбит|сломан|тре[сщ]к?ну|трещин|поврежд|вздут|вздул|неисправ|(?<!\\d[\\s\\u00a0\\u2010-\\u2014-]*)бит(?:ый|ая|ое|ые|а|о|ы)?(?![а-яё]))(?![а-яё]*\\s+нет(?![а-яё]))`,
 ].join('|'), 'i');
 
 // the piece of a card's text that names a defect, or null
@@ -25,7 +28,8 @@ export function defectIn(body) {
   let from = Math.max(0, m.index - 30);
   let to = Math.min(body.length, m.index + m[0].length + 30);
   if (from > 0) from += body.slice(from, m.index).search(/\s/) + 1;
-  if (to < body.length) to = m.index + m[0].length + Math.max(0, body.slice(m.index + m[0].length, to).search(/\s\S*$/));
+  const cut = to < body.length ? body.slice(m.index + m[0].length, to).search(/\s\S*$/) : -1;
+  if (cut >= 0) to = m.index + m[0].length + cut;
   return body.slice(from, to).replace(/\s+/g, ' ').trim();
 }
 
@@ -94,18 +98,19 @@ export async function search(transport, opts, { now = Date.now, clock = null } =
   const pages = raw.pagination?.pages ?? [];
   return {
     total: raw.total ?? 0,
-    ads: flagAds(raw.ads.map(normalizeAd), now(), clock),
+    ads: flagAds(raw.ads.map(normalizeAd), now(), clock, opts.params?.typ ?? 'sell'),
     next_cursor: pages.find((p) => p.label === 'next')?.token || null,
     pages: pages.filter((p) => p.token).map((p) => ({ num: p.num, cursor: p.token })),
   };
 }
 
-export function flagAds(ads, now = Date.now(), clock = null) {
+// `want` is the deal that was asked for: a rental is not «not a sale» in a search for rentals
+export function flagAds(ads, now = Date.now(), clock = null, want = 'sell') {
   const seen = new Set();
   return ads.map((ad) => {
     const flags = [];
     if (ad.price_byn === null) flags.push('no_price');
-    if (ad.type !== 'sell') flags.push('not_sell');
+    if (ad.type !== want) flags.push('not_sell');
     const title = String(ad.title ?? '').toLowerCase();
     if (SUSPECT_WORDS.some((w) => title.includes(w))) flags.push('suspect_title');
     // only a card carries its text; a search result does not

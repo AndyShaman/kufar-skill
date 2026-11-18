@@ -6,6 +6,7 @@ export function flattenCategories(tree) {
     for (const c of list ?? []) {
       const name = c.name_ru ?? c.name;
       const item = { id: String(c.id), name, parent_id: parent ? parent.id : null, path: parent ? `${parent.path} / ${name}` : name };
+      if (c.redirect) item.redirect = String(c.redirect);
       out.push(item);
       walk(c.subcategories, item);
     }
@@ -16,9 +17,15 @@ export function flattenCategories(tree) {
 
 export function findCategories(tree, text) {
   const all = flattenCategories(tree);
-  if (!text) return all;
-  const t = text.toLowerCase();
-  return all.filter((c) => String(c.name).toLowerCase().includes(t));
+  const t = (text ?? '').toLowerCase();
+  // a rubric that only points at another one has no listings of its own: the one it points at is given instead
+  const found = new Map();
+  for (const c of all) {
+    if (t && !String(c.name).toLowerCase().includes(t)) continue;
+    const real = c.redirect ? all.find((x) => x.id === c.redirect && !x.redirect) : c;
+    if (real) found.set(real.id, real);
+  }
+  return [...found.values()];
 }
 
 export function parentOf(tree, id) {
@@ -28,7 +35,7 @@ export function parentOf(tree, id) {
 }
 
 const refsOf = (metadata) => Object.values(metadata?.parameters?.refs ?? {});
-const labelOf = (ref) => ref.labels?.name?.ru ?? ref.name;
+const labelOf = (ref) => String(ref.labels?.name?.ru ?? ref.name ?? '');
 
 export function listParams(metadata) {
   const byFilter = new Map();
@@ -81,7 +88,15 @@ export async function findCatalogValues(nodesOf, cat, text) {
   const found = [];
   let tag = `category_${cat}`;
   for (let level = 0; level < 4; level += 1) {
-    const nodes = (await nodesOf(tag) ?? []).filter((n) => typeof n?.value === 'string' && typeof n.labels?.ru === 'string'
+    let answer;
+    try {
+      answer = await nodesOf(tag);
+    } catch (e) {
+      // the brands are known already; a failure below them keeps what is found
+      if (level === 0) throw e;
+      break;
+    }
+    const nodes = (Array.isArray(answer) ? answer : []).filter((n) => typeof n?.value === 'string' && typeof n.labels?.ru === 'string'
       && typeof n.params?.url_name === 'string');
     let best = null;
     let at = -1;

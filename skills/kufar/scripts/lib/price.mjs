@@ -64,12 +64,14 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
   const unclassified = [];
   if (!byWords && query) {
     const inc = new Set(include.map(String));
-    const words = notSubject((await search(transport, { cat, query, regions, sort: 'new', limit: 200 }, { now, clock })).ads);
+    const general = Object.fromEntries(Object.entries(params).filter(([code]) => GENERAL.has(code)));
+    const words = notSubject((await search(transport, { cat, query, params: general, regions, sort: 'new', limit: 200 }, { now, clock })).ads);
     for (const ad of words) {
       if (pool.has(ad.id)) continue;
       const own = Object.values(ad.params);
       const valueOf = (code) => own.find((x) => x.filter === code)?.value;
-      const codes = Object.keys(params);
+      // the general filters went into the request itself
+      const codes = Object.keys(params).filter((c) => !GENERAL.has(c));
       const missing = codes.some((c) => valueOf(c) === undefined);
       const conflict = codes.some((c) => valueOf(c) !== undefined && contradicts(params[c], valueOf(c)));
       if (!missing || conflict) continue;

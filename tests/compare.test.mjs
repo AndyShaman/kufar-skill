@@ -315,9 +315,10 @@ test('compareBest: top limits the number of picked listings', async () => {
 test('compareBest: a picked listing whose card is gone goes to missing and is absent from picked', async () => {
   const r = await bestOf(bestMarket([`${BIDS[1]}`]));
   assert.deepEqual(r.missing, [`${BIDS[1]}`]);
-  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[0]}`, `${BIDS[2]}`]);
-  assert.deepEqual(r.ads.map((a) => a.id), [`${BIDS[0]}`, `${BIDS[2]}`]);
-  assert.equal(r.count, 2);
+  // the place of the removed card goes to the next one
+  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[0]}`, `${BIDS[2]}`, `${BIDS[3]}`]);
+  assert.deepEqual(r.ads.map((a) => a.id), [`${BIDS[0]}`, `${BIDS[2]}`, `${BIDS[3]}`]);
+  assert.equal(r.count, 3);
 });
 
 // ---- the pick by default: a good thing for normal money ----

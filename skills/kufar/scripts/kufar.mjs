@@ -569,7 +569,8 @@ async function run(argv) {
         }));
       // cars: brand, model and generation live in a catalogue, not in the description of filters
       const nodesOf = (tag) => ctx.transport.getJson('/catalog/v1/nodes', { tag, view: 'taxonomy' });
-      const brands = await cached(path.join(ctx.stateDir, 'cache', `catalog-${cat}.json`), DAY, () => nodesOf(`category_${cat}`));
+      // the catalogue is an addition: when it does not answer, the ordinary filters are still given
+      const brands = await cached(path.join(ctx.stateDir, 'cache', `catalog-${cat}.json`), DAY, () => nodesOf(`category_${cat}`)).catch(() => []);
       const hasCatalog = Array.isArray(brands) && brands.length > 0;
       if (values.find === undefined) {
         const params = listParams(taxonomy.metadata);
@@ -702,7 +703,7 @@ const CATALOG_NOTE = 'В этой рубрике марка, модель и п�
   + 'по другим фильтрам марки и модели находится малая часть объявлений';
 
 // the reader closed the output (… | head): nothing more to say
-process.stdout.on('error', (e) => { if (e.code === 'EPIPE') process.exit(0); else throw e; });
+process.stdout.on('error', (e) => { if (e.code === 'EPIPE') process.exit(process.exitCode ?? 0); else throw e; });
 
 const print = (obj, done) => process.stdout.write(`${JSON.stringify(obj, (k, v) => (k === 'seller_key' ? undefined : v), 2)}\n`, done);
 

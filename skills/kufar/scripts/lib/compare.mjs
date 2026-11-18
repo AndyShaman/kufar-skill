@@ -74,7 +74,7 @@ export async function compareBest(transport, opts, { top = 3, pick = 'fair', now
   const flawed = [];
   const missing = [];
   let opened = 0;
-  while (opened < queue.length && opened < top * 3 && clean.length + missing.length < top) {
+  while (opened < queue.length && opened < top * 3 && clean.length < top) {
     const c = queue[opened++];
     let ad;
     try {

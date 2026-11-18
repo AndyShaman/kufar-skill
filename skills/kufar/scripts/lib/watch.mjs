@@ -117,6 +117,8 @@ export async function trackCheck(ctx) {
     try {
       ad = await fetchAd(ctx.transport, id);
     } catch (err) {
+      // a listing already marked gone is asked only to see whether it came back: its failure must not stop the others
+      if (err.code !== 'NOT_FOUND' && e.gone_at) continue;
       if (err.code !== 'NOT_FOUND') throw err;
       // reported once; asked again on every check, since a seller may put the listing back
       if (!e.gone_at) {

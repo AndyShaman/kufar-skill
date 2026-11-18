@@ -180,7 +180,7 @@ export async function sendTarget(transport, id) {
   if (c.blocked) throw new KufarError('CHAT_BLOCKED', 'Диалог заблокирован, написать в него нельзя');
   // Kufar answers newest first; the newest message tells a repeated send from a new one
   const m = raw.messages?.[0];
-  const last_mine = m?.is_mine === true && typeof m.text === 'string' ? { text: m.text.trim(), at: m.created_at ?? null } : null;
+  const last_mine = m?.is_mine === true && m.rejected !== true && typeof m.text === 'string' ? { text: m.text.trim(), at: m.created_at ?? null } : null;
   return { conversation_id: id, to: c.with, ad: c.ad, last_mine };
 }
 
