@@ -18,6 +18,8 @@ function contradicts(wanted, value) {
 const medianOf = (ads) => priceStats(ads.map((a) => a.price_byn)).median;
 
 export async function estimatePrice(transport, { cat, params = {}, query, regions, exclude = [], include = [], like, by, now = Date.now, clock = null } = {}) {
+  // spaces are not words
+  if (typeof query === 'string') query = query.trim() || undefined;
   let subjectAd = null;
   if (like !== undefined) {
     subjectAd = await fetchAd(transport, like);
