@@ -41,3 +41,14 @@ test('briefPrice: a list of 30 or fewer is given whole', () => {
   assert.equal(r.comparables.length, 30);
   assert.equal(r.comparables_total, 30);
 });
+
+test('briefPrice: removed listings are counted by reason; the list keeps those an agent may bring back', () => {
+  const dropped = [
+    ...Array.from({ length: 40 }, (_, i) => ({ id: `d${i}`, reason: 'duplicate' })),
+    { id: 'n1', reason: 'no_price' }, { id: 's1', reason: 'not_sell' },
+    { id: 'o1', reason: 'outlier' }, { id: 't1', reason: 'suspect_title' },
+  ];
+  const r = briefPrice({ comparables: [], dropped });
+  assert.deepEqual(r.dropped_counts, { duplicate: 40, no_price: 1, not_sell: 1, outlier: 1, suspect_title: 1 });
+  assert.deepEqual(r.dropped.map((d) => d.id), ['o1', 't1']);
+});
