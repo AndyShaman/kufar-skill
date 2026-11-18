@@ -637,6 +637,12 @@ test('sendTarget: last_mine is the newest message when it is mine, with trimmed 
   assert.deepEqual(r.last_mine, { text: 'Да', at: '2026-11-17T12:41:00.000000Z' });
 });
 
+test('sendTarget: a newest message of mine that Kufar rejected is not last_mine', async () => {
+  const messages = [msg('m1', { is_mine: true, text: 'Да', rejected: true })];
+  const r = await acct.sendTarget(chatTransport({ reply: targetReply({ messages }) }), CONV_ID);
+  assert.equal(r.last_mine, null);
+});
+
 test('sendTarget: last_mine has at null when the message has no created_at', async () => {
   const messages = [msg('m1', { is_mine: true, text: 'Да', created_at: undefined })];
   const r = await acct.sendTarget(chatTransport({ reply: targetReply({ messages }) }), CONV_ID);

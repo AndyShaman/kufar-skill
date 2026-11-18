@@ -156,3 +156,32 @@ test('findCatalogValues: nodes without a value, a name or a filter code are skip
   const nodesOf = async (tag) => (tag === 'category_2010' ? [{ value: 5 }, { value: 'x', labels: { ru: 'Audi' } }, null, node('category_2010.mark_audi', 'Audi', 'mark')] : []);
   assert.deepEqual((await findCatalogValues(nodesOf, '2010', 'audi a4')).map((x) => x.value), ['category_2010.mark_audi']);
 });
+
+// ---- a rubric that only points at another one ----
+
+const ALIAS_TREE = { categories: [
+  { id: '17000', name_ru: 'Телефоны', subcategories: [{ id: '17100', parent: '17000', name_ru: 'Наушники', redirect: '5100' }] },
+  { id: '5000', name_ru: 'Электроника', subcategories: [{ id: '5100', parent: '5000', name_ru: 'Наушники' }] },
+  { id: '10000', name_ru: 'Сад', subcategories: [{ id: '10130', parent: '10000', name_ru: 'Агротехника', redirect: '2080' }] },
+  { id: '2000', name_ru: 'Авто', subcategories: [{ id: '2080', parent: '2000', name_ru: 'Сельхозтехника' }] },
+] };
+
+test('findCategories: a rubric that points at another one is replaced by the one it points at, once', () => {
+  assert.deepEqual(findCategories(ALIAS_TREE, 'наушники').map((c) => c.id), ['5100']);
+  assert.deepEqual(findCategories(ALIAS_TREE, 'агротехника').map((c) => c.id), ['2080']);
+  assert.ok(!findCategories(ALIAS_TREE, '').some((c) => c.id === '17100' || c.id === '10130'));
+  assert.equal(parentOf(ALIAS_TREE, '17100'), '17000');
+});
+
+test('findCatalogValues: a failure or a strange answer below the brands keeps what is found', async () => {
+  const failing = async (tag) => { if (tag === 'category_2010') return CATALOG.category_2010; throw new Error('down'); };
+  assert.deepEqual((await findCatalogValues(failing, '2010', 'Volkswagen Passat')).map((x) => x.text), ['Volkswagen']);
+  const odd = async (tag) => (tag === 'category_2010' ? CATALOG.category_2010 : { nodes: 1 });
+  assert.deepEqual((await findCatalogValues(odd, '2010', 'Volkswagen Passat')).map((x) => x.text), ['Volkswagen']);
+});
+
+test('findParamValues: a filter without a name does not break the lookup', () => {
+  const meta = { parameters: { refs: { a: { url_name: 'x', values: [{ value: 1, labels: { ru: 'Синий' } }] } } } };
+  assert.deepEqual(findParamValues(meta, 'красный'), []);
+  assert.equal(findParamValues(meta, 'синий').length, 1);
+});

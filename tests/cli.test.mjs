@@ -1451,6 +1451,8 @@ test('kufar: a reader that closes the output early gets no stack trace', async (
   child.stdout.destroy();
   let err = '';
   child.stderr.on('data', (d) => { err += d; });
-  await new Promise((resolve) => child.on('close', resolve));
+  const code = await new Promise((resolve) => child.on('close', resolve));
   assert.equal(err, '');
+  // `search` without arguments is BAD_ARGS: the closed output does not turn it into a success
+  assert.equal(code, 1);
 });

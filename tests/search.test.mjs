@@ -423,3 +423,35 @@ test('flagAds: a car to order carries on_order, a car in stock and other goods d
   assert.ok(!b.flags.includes('on_order'));
   assert.ok(!c.flags.includes('on_order'));
 });
+
+// ---- rent ----
+
+test('flagAds: a rental is not_sell in a search for sales and carries no such flag when rent was asked for', () => {
+  const let1 = mkAd(1, 100, { type: 'let' });
+  assert.ok(flagAds([let1], NOW)[0].flags.includes('not_sell'));
+  assert.deepEqual(flagAds([let1], NOW, null, 'let')[0].flags, []);
+  assert.ok(flagAds([mkAd(2, 100)], NOW, null, 'let')[0].flags.includes('not_sell'));
+});
+
+test('search: with --param typ=let the rentals come without not_sell', async () => {
+  const tr = fakeTransport(() => ({ ads: [rawAd({ id: 1, type: 'let' })], total: 1 }));
+  const r = await search(tr, { cat: '1010', params: { typ: 'let' } }, { now: () => NOW });
+  assert.equal(r.ads[0].type, 'let');
+  assert.ok(!r.ads[0].flags.includes('not_sell'));
+});
+
+// ---- defects: denial before any phrase, more of the forms sellers use ----
+
+test('defectIn: a denied phrase is not a defect, whatever the phrase', () => {
+  for (const t of ['Телефон не на запчасти, рабочий', 'Не требует ремонта', 'Машина не после ДТП', 'Оплата по частям', 'Звонить в нерабочее время', 'Windows 64\u2011бит']) {
+    assert.equal(defectIn(t), null, t);
+  }
+});
+
+test('defectIn: «вздулась», «треснул», «под замену» are defects', () => {
+  for (const t of ['АКБ вздулась', 'Экран треснул', 'Стекло трескнуло', 'Экран под замену']) assert.ok(defectIn(t), t);
+});
+
+test('defectIn: with no space after the word the word is kept whole', () => {
+  assert.ok(defectIn(`Разбита${'x'.repeat(60)}`).startsWith('Разбита'));
+});

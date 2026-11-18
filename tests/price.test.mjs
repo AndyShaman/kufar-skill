@@ -199,6 +199,15 @@ test('words slice runs only with query and without params', async () => {
   assert.equal(r.group.query, 'iphone 13');
 });
 
+test('unclassified: the words request keeps the general filters and drops the filters of the goods', async () => {
+  const tr = mk((q) => (q.query ? pageOf([]) : pageOf(series(1000000001, SIX))));
+  await estimatePrice(tr, { cat: '17010', params: { ...P5, ar: '15', cnd: '1' }, query: 'iphone' });
+  const w = searches(tr).find((s) => s.query.query);
+  assert.equal(w.query.ar, '15');
+  assert.equal(w.query.cnd, '1');
+  assert.equal('phm' in w.query, false);
+});
+
 test('unclassified rule and include', async () => {
   const words = [
     rawAdOf({ id: 1000000101, price: 500, phm: null }),

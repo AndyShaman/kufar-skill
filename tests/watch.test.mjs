@@ -348,3 +348,15 @@ test('trackList shape and trackRemove', async () => {
   assert.deepEqual(await trackRemove(ctx, '1000000001'), { removed: '1000000001' });
   await rejectsCode(trackRemove(ctx, '1000000001'), 'NOT_TRACKED');
 });
+
+test('trackCheck: a listing already marked gone that fails to answer does not stop the check of the others', async () => {
+  const { ctx, cards } = await trackCtx();
+  await trackAdd(ctx, '1000000001', '');
+  await trackAdd(ctx, '1000000002', '');
+  cards['1000000001'] = new KufarError('NOT_FOUND', 'gone');
+  await trackCheck(ctx);
+  cards['1000000001'] = new KufarError('TIMEOUT', 'slow');
+  cards['1000000002'] = rawAdOf({ id: 1000000002, price: 500 });
+  const r = await trackCheck(ctx);
+  assert.deepEqual(r.changes.map((c) => `${c.id} ${c.change}`), ['1000000002 price']);
+});

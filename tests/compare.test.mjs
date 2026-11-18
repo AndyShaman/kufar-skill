@@ -409,7 +409,7 @@ test('compareBest: when every opened card names a defect they are still the answ
   assert.equal(r.count, 6);
 });
 
-test('compareBest: a card that is gone still takes its place, a card with a defect does not', async () => {
+test('compareBest: neither a card that is gone nor a card with a defect takes a place', async () => {
   const tr = fakeTransport((p) => {
     const id = itemIdOf(p);
     if (!id) return pageOf(BIDS.map((x) => BRAW[x]), BIDS.length);
@@ -418,7 +418,7 @@ test('compareBest: a card that is gone still takes its place, a card with a defe
   });
   const r = await bestOf(tr);
   assert.deepEqual(r.missing, [`${BIDS[1]}`]);
-  assert.deepEqual(ids(r), [BIDS[2], BIDS[3], BIDS[0]].map(String));
+  assert.deepEqual(ids(r), [BIDS[2], BIDS[3], BIDS[4], BIDS[0]].map(String));
 });
 
 test('compareBest: fewer than two cards still on the site -> NOT_FOUND with the missing ones', async () => {
@@ -459,4 +459,10 @@ test('compareBest: nothing found -> NOT_ENOUGH with found 0', async () => {
 
 test('compareBest: the group options are those of price, a missing cat is BAD_ARGS', async () => {
   await rejectsCode(compareBest(bestMarket(), {}, { top: 3, now: () => NOW }), 'BAD_ARGS');
+});
+
+test('compareBest: the first card is gone, the next ones are opened and nothing opened is lost', async () => {
+  const r = await bestOf(bestMarket([`${BIDS[0]}`]), { top: 2 });
+  assert.deepEqual(r.missing, [`${BIDS[0]}`]);
+  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[1]}`, `${BIDS[2]}`]);
 });
