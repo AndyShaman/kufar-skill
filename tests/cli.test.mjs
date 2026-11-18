@@ -1456,3 +1456,29 @@ test('kufar: a reader that closes the output early gets no stack trace', async (
   // `search` without arguments is BAD_ARGS: the closed output does not turn it into a success
   assert.equal(code, 1);
 });
+
+// ---- short answers by default ----
+
+test('kufar search: the short view by default, --full gives the cards as Kufar has them', async () => {
+  const found = Object.values(BEST_RAWS).slice(0, 2);
+  const short = await runFake(() => ['search', '--cat', '17010'], { search: found });
+  assert.equal(short.status, 0, short.stdout);
+  assert.equal(short.json.count, 2);
+  assert.equal('images' in short.json.ads[0], false);
+  assert.equal(typeof short.json.ads[0].photos, 'number');
+  assert.equal(typeof Object.values(short.json.ads[0].params)[0], 'string');
+  const full = await runFake(() => ['search', '--cat', '17010', '--full'], { search: found });
+  assert.ok(Array.isArray(full.json.ads[0].images), full.stdout);
+  assert.equal(typeof Object.values(full.json.ads[0].params)[0], 'object');
+});
+
+test('kufar price: comparables_total by default, --full gives the answer without it', async () => {
+  const found = Object.values(BEST_RAWS);
+  const short = await runFake(() => ['price', '--cat', '17010', '--param', 'phm=5380'], { search: found });
+  assert.equal(short.status, 0, short.stdout);
+  assert.equal(short.json.comparables_total, short.json.comparables.length);
+  const full = await runFake(() => ['price', '--cat', '17010', '--param', 'phm=5380', '--full'], { search: found });
+  assert.equal(full.status, 0, full.stdout);
+  assert.equal('comparables_total' in full.json, false);
+  assert.equal(full.json.comparables.length, short.json.comparables.length);
+});
