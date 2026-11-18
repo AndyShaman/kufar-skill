@@ -110,6 +110,8 @@ export function flagAds(ads, now = Date.now(), clock = null) {
     if (SUSPECT_WORDS.some((w) => title.includes(w))) flags.push('suspect_title');
     // only a card carries its text; a search result does not
     if (defectIn(ad.body)) flags.push('suspect_text');
+    // a car to order is not in the country yet, its price usually leaves out delivery and customs
+    if (ad.params?.cars_availability?.value === '1') flags.push('on_order');
     if (ad.seller_key) {
       const key = `${ad.seller_key}\u0000${title.trim()}\u0000${ad.price_byn}`;
       if (seen.has(key)) flags.push('duplicate');
