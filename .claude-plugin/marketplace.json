@@ -1,0 +1,11 @@
+{
+  "name": "kufar-skill",
+  "owner": { "name": "AndyShaman" },
+  "plugins": [
+    {
+      "name": "kufar",
+      "source": "./",
+      "description": "Kufar.by classifieds for AI agents: search, fair price, scam check, watching new listings, your own listings and chat"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "kufar",
+  "description": "Kufar.by classifieds for AI agents: search, fair price, scam check, watching new listings, your own listings and chat",
+  "author": { "name": "AndyShaman", "url": "https://github.com/AndyShaman" },
+  "homepage": "https://github.com/AndyShaman/kufar-skill",
+  "repository": "https://github.com/AndyShaman/kufar-skill",
+  "license": "MIT",
+  "keywords": ["kufar", "classifieds", "marketplace", "belarus", "agent-skills"]
+}
