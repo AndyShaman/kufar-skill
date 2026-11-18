@@ -8,7 +8,7 @@
 2. Посчитай:
 
 ```bash
-kufar.mjs price --cat 17010 --param phm=5380 --param ppm=20 --param cnd=1 --query "iphone 13"
+node <папка скилла>/scripts/kufar.mjs price --cat 17010 --param phm=5380 --param ppm=20 --param cnd=1 --query 'iphone 13'
 ```
 
 `--query` добавляет заход по словам: объявления без заполненных характеристик приходят в `unclassified` и в расчёт не входят, пока ты их не подтвердишь.
@@ -16,7 +16,7 @@ kufar.mjs price --cat 17010 --param phm=5380 --param ppm=20 --param cnd=1 --quer
 3. Просмотри `comparables` (что вошло), `dropped` (что убрано и почему) и `unclassified`. Чужое убери, своё верни и пересчитай:
 
 ```bash
-kufar.mjs price --cat 17010 --param phm=5380 --param ppm=20 --param cnd=1 --query "iphone 13" \
+node <папка скилла>/scripts/kufar.mjs price --cat 17010 --param phm=5380 --param ppm=20 --param cnd=1 --query 'iphone 13' \
   --exclude 1000000007,1000000012 --include 1000000033
 ```
 
@@ -25,7 +25,7 @@ kufar.mjs price --cat 17010 --param phm=5380 --param ppm=20 --param cnd=1 --quer
 ## «Дёшево ли это объявление»
 
 ```bash
-kufar.mjs price --like https://www.kufar.by/item/1000000001 --by phm,ppm,cnd
+node <папка скилла>/scripts/kufar.mjs price --like https://www.kufar.by/item/1000000001 --by phm,ppm,cnd
 ```
 
 Без `--by` и без `--query` команда вернёт ошибку `NEEDS_BY` со списком характеристик объявления. К `--by` можно добавить свой фильтр через `--param` (например состояние, `--param cnd=<значение>`); при одинаковом коде берётся значение из `--param`. Выбери те, что определяют цену: модель, объём памяти, состояние; для авто — модель, год, двигатель. Регион, доставку и цвет обычно не бери: группа станет слишком узкой.
@@ -81,9 +81,11 @@ kufar.mjs price --like https://www.kufar.by/item/1000000001 --by phm,ppm,cnd
 Когда у рубрики нет поля «модель» или продавец его не заполнил, группа собирается по словам:
 
 ```bash
-kufar.mjs price --cat 16040 --query "thinkpad t480" --param cnd=1
-kufar.mjs price --like https://www.kufar.by/item/1000000001 --query "thinkpad t480"
+node <папка скилла>/scripts/kufar.mjs price --cat 16040 --query 'thinkpad t480' --param cnd=1
+node <папка скилла>/scripts/kufar.mjs price --like https://www.kufar.by/item/1000000001 --query 'thinkpad t480'
 ```
+
+Общие фильтры товар не определяют: состояние (`cnd`), частник или компания (`cmp`), доставка (`dle`), город (`ar`) и `--region`. С ними группа всё равно собирается по словам, а фильтр её сужает. Если задана характеристика самого товара (модель, память), группу задаёт она, а `--query` только добирает объявления без характеристик в `unclassified`: сузить такую группу словами нельзя. Одни общие фильтры без `--query` команда не принимает: это была бы цена целой рубрики.
 
 Поиск по словам шумный: в выборку попадают аксессуары и соседние модели. Обязательно прочитай `comparables`, убери чужое через `--exclude` и пересчитай. Скажи пользователю, что оценка грубее, чем по характеристикам.
 

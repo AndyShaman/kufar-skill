@@ -55,14 +55,14 @@
 
    ```bash
    mkdir -p ~/.claude/skills/kufar
-   cp -R kufar-skill/SKILL.md kufar-skill/scripts kufar-skill/references kufar-skill/assets ~/.claude/skills/kufar/
+   cp -R kufar-skill/SKILL.md kufar-skill/LICENSE kufar-skill/scripts kufar-skill/references kufar-skill/assets ~/.claude/skills/kufar/
    ```
 
    Другому агенту достаточно указать на файл `SKILL.md`: в нём написано, какие команды запускать.
 
 4. Откройте новую сессию агента и попросите что-нибудь найти на Куфаре.
 
-Тесты остаются в репозитории и для работы скилла не нужны. Запуск: `node --test tests/`.
+Тесты остаются в репозитории и для работы скилла не нужны. Запуск: `node --test "tests/*.test.mjs"`.
 
 ## Вход в аккаунт: что важно знать
 
