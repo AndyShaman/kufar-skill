@@ -52,3 +52,8 @@ test('briefPrice: removed listings are counted by reason; the list keeps those a
   assert.deepEqual(r.dropped_counts, { duplicate: 40, no_price: 1, not_sell: 1, outlier: 1, suspect_title: 1 });
   assert.deepEqual(r.dropped.map((d) => d.id), ['o1', 't1']);
 });
+
+test('briefAd: a characteristic with nothing in its value is left out', () => {
+  const b = briefAd(mkAd(1, 1, { params: { d: P('Даты заезда-выезда', ', , , ', 'dt'), g: P('Количество гостей', '3', 'gs') } }));
+  assert.deepEqual(b.params, { 'Количество гостей': '3' });
+});

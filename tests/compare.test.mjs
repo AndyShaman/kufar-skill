@@ -467,3 +467,10 @@ test('compareBest: the first card is gone, the next ones are opened and nothing 
   assert.deepEqual(r.missing, [`${BIDS[0]}`]);
   assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[1]}`, `${BIDS[2]}`]);
 });
+
+test('pickBest: by price alone a cheaper long-listed listing comes before a dearer fresh one', () => {
+  const r = pickBest(estimateOf(350, [[230, 'stale'], [320], [340], [360]]), 3, null, true);
+  assert.deepEqual(r.picked.map((x) => x.id), [idAt(0), idAt(1), idAt(2)]);
+  assert.equal(r.skipped.stale, 0);
+  assert.equal(r.skipped.other, 1);
+});
