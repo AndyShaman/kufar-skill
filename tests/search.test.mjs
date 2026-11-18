@@ -340,6 +340,15 @@ test('flagAds: defects in the words sellers really use', () => {
   }
 });
 
+test('flagAds: «бит экран» is a defect, «не бит» and «64 бит» are not', () => {
+  for (const body of ['фейс рабочий, бит экран и задняя крышка', 'Битый экран, остальное работает', 'Экран битый']) {
+    assert.ok(flagAds([mkAd(1, 100, { body })], NOW)[0].flags.includes('suspect_text'), body);
+  }
+  for (const body of ['Не бит, не крашен', 'Windows 10 64 бит, SSD 256', 'Процессор 64-бит', 'Работает быстро, любит уход']) {
+    assert.ok(!flagAds([mkAd(1, 100, { body })], NOW)[0].flags.includes('suspect_text'), body);
+  }
+});
+
 test('flagAds: a title that says the thing does not work or is sold in parts is suspect_title', () => {
   for (const title of ['iPhone 13 128gb (нерабочий)', 'Rover 75 2.0V6 по частям', 'iPhone 13 локнутый', 'Айфон 13 залочен', 'Плата донор iPhone 13']) {
     assert.ok(flagAds([mkAd(1, 100, { title, body: null })], NOW)[0].flags.includes('suspect_title'), title);
