@@ -413,3 +413,13 @@ test('defectIn: the piece is cut at whole words', () => {
   assert.ok(piece.length < text.length);
   assert.equal(defectIn('разбит'), 'разбит');
 });
+
+// on_order: a car that is not in the country yet
+test('flagAds: a car to order carries on_order, a car in stock and other goods do not', () => {
+  const order = { cars_availability: { label: 'Под заказ', value: '1', text: 'Да', filter: 'cav' } };
+  const stock = { cars_availability: { label: 'Под заказ', value: '0', text: '-', filter: 'cav' } };
+  const [a, b, c] = flagAds([mkAd(1, 100, { params: order }), mkAd(2, 100, { params: stock }), mkAd(3, 100)], NOW);
+  assert.ok(a.flags.includes('on_order'));
+  assert.ok(!b.flags.includes('on_order'));
+  assert.ok(!c.flags.includes('on_order'));
+});
