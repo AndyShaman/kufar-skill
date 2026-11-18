@@ -572,6 +572,13 @@ test('general filters only without a query is BAD_ARGS and makes no request', as
   assert.equal(tr.calls.length, 0);
 });
 
+test('general filters only with a query of spaces is BAD_ARGS and makes no request', async () => {
+  const tr = mk(() => pageOf([]));
+  await rejectsCode(estimatePrice(tr, { cat: '16040', params: { cnd: '1' }, query: '   ' }), 'BAD_ARGS');
+  await rejectsCode(estimatePrice(tr, { cat: '16040', query: ' \t ' }), 'BAD_ARGS');
+  assert.equal(tr.calls.length, 0);
+});
+
 test('(guard) a goods filter with a general one: main requests carry both, the words request only the query', async () => {
   const tr = mk((q) => (q.query ? pageOf([]) : pageOf(series(1000000101, SIX))));
   await estimatePrice(tr, { cat: '17010', params: { phm: '5380', cnd: '1' }, query: 'iphone 13' });
