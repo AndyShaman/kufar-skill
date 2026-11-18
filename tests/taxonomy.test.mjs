@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  flattenCategories, findCategories, parentOf, listParams, findParamValues,
+  flattenCategories, findCategories, parentOf, listParams, findParamValues, findCatalogValues,
 } from '../skills/kufar/scripts/lib/taxonomy.mjs';
 import { throwsCode } from './helpers.mjs';
 
@@ -86,4 +86,73 @@ test('findParamValues lists a repeated (filter, value) once, ignoring case', () 
 
 test('findParamValues respects limit', () => {
   assert.equal(findParamValues(META, 'iphone 13', 2).length, 2);
+});
+
+// ---- lookup by the name of a filter ----
+
+const MEMORY_META = { parameters: { refs: {
+  a: { name: 'phones_memory', url_name: 'ppm', labels: { name: { ru: 'Встроенная память' } }, values: [{ value: 10, labels: { ru: '64 ГБ' } }, { value: 20, labels: { ru: '128 ГБ' } }] },
+  b: { name: 'phones_model', url_name: 'phm', labels: { name: { ru: 'Модель' } }, values: [{ value: 1, labels: { ru: 'Память 3000' } }] },
+} } };
+
+test('findParamValues: a word that names a filter gives the values of that filter, after the values that match themselves', () => {
+  const r = findParamValues(MEMORY_META, 'память');
+  assert.deepEqual(r.map((x) => `${x.filter}=${x.value}`), ['phm=1', 'ppm=10', 'ppm=20']);
+  assert.deepStrictEqual(r[2], { name: 'phones_memory', filter: 'ppm', label: 'Встроенная память', value: '20', text: '128 ГБ' });
+});
+
+// ---- the catalogue: brand, model and generation of a car ----
+
+const node = (value, ru, type, extra = {}) => ({
+  value, labels: { ru }, params: { name: `cars_${type}_v2`, node_type: type, url_name: { mark: 'cbnd2', model: 'cmdl2', generation: 'cgen2' }[type], ...extra },
+});
+const VW = 'category_2010.mark_volkswagen';
+const CATALOG = {
+  category_2010: [node('category_2010.mark_audi', 'Audi', 'mark'), node(VW, 'Volkswagen', 'mark'), node('category_2010.mark_volkswagen_china', 'Volkswagen China', 'mark')],
+  [VW]: [node(`${VW}.model_passat`, 'Passat', 'model'), node(`${VW}.model_passat_cc`, 'Passat CC', 'model'), node(`${VW}.model_polo`, 'Polo', 'model')],
+  [`${VW}.model_passat`]: [
+    node(`${VW}.model_passat.generation_b8`, 'B8', 'generation', { startYears: '2014', endYears: '2020' }),
+    node(`${VW}.model_passat.generation_b7`, 'B7', 'generation', { startYears: '2010', endYears: '2015' }),
+  ],
+  [`${VW}.model_passat.generation_b7`]: [],
+};
+const catalog = () => {
+  const asked = [];
+  return { asked, nodesOf: async (tag) => { asked.push(tag); return CATALOG[tag] ?? []; } };
+};
+
+test('findCatalogValues: brand, model and generation are found together, one request per level', async () => {
+  const c = catalog();
+  const r = await findCatalogValues(c.nodesOf, '2010', 'volkswagen Passat b7');
+  assert.deepStrictEqual(r, [
+    { name: 'cars_mark_v2', filter: 'cbnd2', label: 'Марка', value: VW, text: 'Volkswagen' },
+    { name: 'cars_model_v2', filter: 'cmdl2', label: 'Модель', value: `${VW}.model_passat`, text: 'Passat' },
+    { name: 'cars_generation_v2', filter: 'cgen2', label: 'Поколение', value: `${VW}.model_passat.generation_b7`, text: 'B7', years: '2010-2015' },
+  ]);
+  assert.deepEqual(c.asked, ['category_2010', VW, `${VW}.model_passat`, `${VW}.model_passat.generation_b7`]);
+});
+
+test('findCatalogValues: the longest name wins, a name inside another word does not match', async () => {
+  const cc = await findCatalogValues(catalog().nodesOf, '2010', 'Volkswagen Passat CC');
+  assert.deepEqual(cc.map((x) => x.text), ['Volkswagen', 'Passat CC']);
+  assert.deepEqual(await findCatalogValues(catalog().nodesOf, '2010', 'audio'), []);
+});
+
+test('findCatalogValues: a level with no match is listed whole, so the agent can choose', async () => {
+  const models = await findCatalogValues(catalog().nodesOf, '2010', 'Volkswagen');
+  assert.deepEqual(models.map((x) => x.text), ['Volkswagen', 'Passat', 'Passat CC', 'Polo']);
+  const gens = await findCatalogValues(catalog().nodesOf, '2010', 'volkswagen passat б7');
+  assert.deepEqual(gens.map((x) => `${x.text}${x.years ? ` ${x.years}` : ''}`), ['Volkswagen', 'Passat', 'B8 2014-2020', 'B7 2010-2015']);
+});
+
+test('findCatalogValues: no brand in the words or no catalogue in the rubric gives nothing', async () => {
+  const c = catalog();
+  assert.deepEqual(await findCatalogValues(c.nodesOf, '2010', 'Passat'), []);
+  assert.deepEqual(c.asked, ['category_2010']);
+  assert.deepEqual(await findCatalogValues(catalog().nodesOf, '17010', 'iPhone 13'), []);
+});
+
+test('findCatalogValues: nodes without a value, a name or a filter code are skipped', async () => {
+  const nodesOf = async (tag) => (tag === 'category_2010' ? [{ value: 5 }, { value: 'x', labels: { ru: 'Audi' } }, null, node('category_2010.mark_audi', 'Audi', 'mark')] : []);
+  assert.deepEqual((await findCatalogValues(nodesOf, '2010', 'audi a4')).map((x) => x.value), ['category_2010.mark_audi']);
 });

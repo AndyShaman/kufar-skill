@@ -37,6 +37,13 @@ async function setup({ responses = [res(200, { ok: true })], last, random = () =
   return { stateDir, fetches, sleeps, transport };
 }
 
+test('the catalogue of brands and models is an open path', async () => {
+  const { transport, fetches } = await setup({ responses: [res(200, [{ value: 'category_2010.mark_audi' }])] });
+  assert.deepEqual(await transport.getJson('/catalog/v1/nodes', { tag: 'category_2010', view: 'taxonomy' }), [{ value: 'category_2010.mark_audi' }]);
+  assert.equal(fetches.length, 1);
+  await rejectsCode(transport.getJson('/catalog/v1/nodes/1'), 'PATH_NOT_ALLOWED');
+});
+
 test('path outside allow list is rejected before fetch', async () => {
   for (const p of ['/foo', '/search-api/v2/item/abc/rendered', '/search-api/v2/item//rendered', '/search-api/v2/search']) {
     const { transport, fetches } = await setup();

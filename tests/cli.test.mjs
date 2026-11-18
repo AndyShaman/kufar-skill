@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn as spawnAsync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpDir } from './helpers.mjs';
@@ -1442,4 +1442,15 @@ test('kufar edit: a new email alone is a preview with the masked email as the ch
   assert.deepEqual(r.json.preview.changes, [{ name: 'email', label: 'Почта', from: null, to: r.json.preview.email }]);
   assert.equal(r.json.preview.email, 'n…@example.com');
   assert.ok(!r.stdout.includes('new@example.com'));
+});
+
+// ---- output cut by the reader (… | head) ----
+
+test('kufar: a reader that closes the output early gets no stack trace', async () => {
+  const child = spawnAsync(process.execPath, [CLI, 'search'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, KUFAR_STATE_DIR: await tmpDir() } });
+  child.stdout.destroy();
+  let err = '';
+  child.stderr.on('data', (d) => { err += d; });
+  await new Promise((resolve) => child.on('close', resolve));
+  assert.equal(err, '');
 });

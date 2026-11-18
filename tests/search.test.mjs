@@ -404,3 +404,12 @@ test('search: (guard) the live shape of an empty result', async () => {
   assert.deepEqual(r.ads, []);
   assert.equal(r.next_cursor, null);
 });
+
+test('defectIn: the piece is cut at whole words', () => {
+  const text = 'Продам айфон 13 акб 79 не менялся фейс рабочий трутон тоже бит экран и задняя крышка коробка родная отдам чехлы и зарядку';
+  const piece = defectIn(text);
+  assert.ok(piece.includes('бит экран'), piece);
+  assert.ok(` ${text} `.includes(` ${piece} `), piece);
+  assert.ok(piece.length < text.length);
+  assert.equal(defectIn('разбит'), 'разбит');
+});
