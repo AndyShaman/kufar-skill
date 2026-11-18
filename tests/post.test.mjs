@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { buildAd, maskContact, photoInfo, postCode, uploadPhoto, insertAd, submitAd } from '../scripts/lib/post.mjs';
+import { buildAd, maskContact, photoInfo, postCode, uploadPhoto, insertAd, submitAd } from '../skills/kufar/scripts/lib/post.mjs';
 import {
   tmpDir, rejectsCode, errText, NOW, DAY, goodToken, fakeFetch, jsonRes, headersOf,
 } from './helpers.mjs';
@@ -777,7 +777,7 @@ test('submitAd: (guard) the same code 24 hours and 1 ms later goes to the networ
 
 // ---- titleHints ----
 
-const hints = async (s) => (await import('../scripts/lib/post.mjs')).titleHints(s);
+const hints = async (s) => (await import('../skills/kufar/scripts/lib/post.mjs')).titleHints(s);
 
 test('titleHints: an ordinary title gives no hints', async () => {
   for (const s of ['Диван угловой, ткань', 'Шины зимние 205/55 R16', 'Фильтр масляный 0 280 158 827', 'Стеллаж 4 ряда', 'Флешка 128 ГБ']) {

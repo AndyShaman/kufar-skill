@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { estimatePrice as estimate } from '../scripts/lib/price.mjs';
+import { estimatePrice as estimate } from '../skills/kufar/scripts/lib/price.mjs';
 import {
   rejectsCode, rawAd, rawAdOf, series, fakeTransport, itemIdOf, pageOf, SEARCH_PATH, NOW, daysAgo, CLOCK,
 } from './helpers.mjs';

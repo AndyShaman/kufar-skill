@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanPhoto } from '../scripts/lib/photo.mjs';
+import { cleanPhoto } from '../skills/kufar/scripts/lib/photo.mjs';
 import {
   SOI, APP0, APP2, DQT, SOF, SOS_TAIL, XMP, IPTC, COM, GPS_MARK, seg, tiff, exif, jpeg, orientationOf, countOf,
   PNG_SIG, chunk, IHDR, PHYS, IDAT, IEND, png,

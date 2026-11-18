@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeMyAd, normalizeConversation, normalizeMessage, myListings, inbox, chat,
-} from '../scripts/lib/account.mjs';
-import * as acct from '../scripts/lib/account.mjs';
-import { KufarError } from '../scripts/lib/errors.mjs';
+} from '../skills/kufar/scripts/lib/account.mjs';
+import * as acct from '../skills/kufar/scripts/lib/account.mjs';
+import { KufarError } from '../skills/kufar/scripts/lib/errors.mjs';
 import {
   rejectsCode, fakeTransport, MY_AD_RAW, CONV_RAW, CONV_ID, MSG_TEXT_RAW, MSG_ATTACH_RAW,
 } from './helpers.mjs';
@@ -774,7 +774,7 @@ test('normalizeMyAd: the existing keys are unchanged by can and refusal', () => 
 
 // ---- step 3g: newDialogTarget (the export does not exist yet: taken inside the tests) ----
 
-const newDialogTargetOf = async () => (await import('../scripts/lib/account.mjs')).newDialogTarget;
+const newDialogTargetOf = async () => (await import('../skills/kufar/scripts/lib/account.mjs')).newDialogTarget;
 const CHECK_PATH = '/messaging-api/v1/conversations/check/1000000001';
 const INFO_PATH = '/messaging-api/v3/conversations/info/1000000001';
 const AD_INFO = { id: 1000000001, subject: 'Катушка зажигания, новая', price_byn: '12345', currency: 'BYN', link: 'http://www.kufar.by/item/1000000001' };

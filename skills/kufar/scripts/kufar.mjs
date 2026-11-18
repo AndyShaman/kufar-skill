@@ -57,6 +57,7 @@ const COMPARE_OPTIONS = {
   exclude: { type: 'string' },
   include: { type: 'string' },
   top: { type: 'string' },
+  pick: { type: 'string' },
 };
 
 function parse(args, options, positionals = 0) {
@@ -249,9 +250,9 @@ async function compareCmd(args) {
     throw bad(`Неверные аргументы: ${e.message}`);
   }
   const { values: v, positionals: refs } = r;
-  const group = Object.keys(v).some((k) => k !== 'top');
+  const group = Object.keys(v).some((k) => k !== 'top' && k !== 'pick');
   if (refs.length) {
-    if (group || v.top !== undefined) throw bad('compare: либо объявления, либо условия поиска (--cat …), не вместе');
+    if (group || v.top !== undefined || v.pick !== undefined) throw bad('compare: либо объявления, либо условия поиска (--cat …), не вместе');
     const ids = refs.map(parseAdRef);
     if (ids.length < 2 || ids.length > 5) throw bad('compare: нужно от 2 до 5 объявлений', { count: ids.length });
     if (new Set(ids).size !== ids.length) throw bad('compare: одно объявление указано дважды');
@@ -266,7 +267,7 @@ async function compareCmd(args) {
     cat: v.cat, params: parseParams(v.param), query: v.query, regions: v.region, exclude: csv(v.exclude), include: csv(v.include),
   };
   const ctx = await getClockCtx();
-  const res = await compareBest(ctx.transport, opts, { top: v.top === undefined ? 3 : Number(v.top), now: ctx.now, clock: ctx.clock });
+  const res = await compareBest(ctx.transport, opts, { top: v.top === undefined ? 3 : Number(v.top), pick: v.pick, now: ctx.now, clock: ctx.clock });
   return { ...res, ads: res.ads.map((ad) => flagAds([ad], ctx.now(), ctx.clock)[0]) };
 }
 

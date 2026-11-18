@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { KufarError } from '../scripts/lib/errors.mjs';
+import { KufarError } from '../skills/kufar/scripts/lib/errors.mjs';
 import {
   diffSeen, watchAdd, watchCheck, watchList, watchRemove,
   trackAdd, trackCheck, trackList, trackRemove,
-} from '../scripts/lib/watch.mjs';
+} from '../skills/kufar/scripts/lib/watch.mjs';
 import {
   tmpDir, rejectsCode, rawAdOf, series, fakeTransport, itemIdOf, pageOf, SEARCH_PATH, NOW, daysAgo, CLOCK,
 } from './helpers.mjs';

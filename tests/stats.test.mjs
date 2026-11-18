@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { quantile, priceStats, cleanForPricing, reliability, position } from '../scripts/lib/stats.mjs';
+import { quantile, priceStats, cleanForPricing, reliability, position } from '../skills/kufar/scripts/lib/stats.mjs';
 import { mkAd } from './helpers.mjs';
 
 test('quantile interpolates linearly', () => {

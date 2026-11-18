@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { normalizePhone, requestCode, confirmCode } from '../scripts/lib/codelogin.mjs';
+import { normalizePhone, requestCode, confirmCode } from '../skills/kufar/scripts/lib/codelogin.mjs';
 import {
   tmpDir, rejectsCode, throwsCode, NOW, goodToken, makeToken, errText, DAY,
   fakeFetch, jsonRes, emptyRes, headersOf, hangUntilAbort,

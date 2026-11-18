@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createTransport } from '../scripts/lib/transport.mjs';
-import { KufarError } from '../scripts/lib/errors.mjs';
+import { createTransport } from '../skills/kufar/scripts/lib/transport.mjs';
+import { KufarError } from '../skills/kufar/scripts/lib/errors.mjs';
 import { tmpDir, rejectsCode } from './helpers.mjs';
 
 const NOW = 1_000_000;

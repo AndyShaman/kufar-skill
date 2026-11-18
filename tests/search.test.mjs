@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildSearchQuery, search, flagAds, ageDays, STALE_DAYS, BUMP_GAP_DAYS, defectIn,
-} from '../scripts/lib/search.mjs';
+} from '../skills/kufar/scripts/lib/search.mjs';
 import {
   rejectsCode, throwsCode, plain, mkAd, rawAd, fakeTransport, SEARCH_PATH, NOW, DAY, daysAgo, CLOCK,
 } from './helpers.mjs';

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
-import { KufarError } from '../scripts/lib/errors.mjs';
+import { KufarError } from '../skills/kufar/scripts/lib/errors.mjs';
 
 export async function tmpDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'kufar-test-'));

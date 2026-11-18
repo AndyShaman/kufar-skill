@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { MAX_TEXT, checkText, confirmCode, sendMessage } from '../scripts/lib/chatsend.mjs';
-import * as chatsend from '../scripts/lib/chatsend.mjs';
+import { MAX_TEXT, checkText, confirmCode, sendMessage } from '../skills/kufar/scripts/lib/chatsend.mjs';
+import * as chatsend from '../skills/kufar/scripts/lib/chatsend.mjs';
 import { rejectsCode, throwsCode, errText, CONV_ID } from './helpers.mjs';
 
 // made-up key: three parts, the second and the third are long enough to count alone
@@ -438,7 +438,7 @@ test('sendMessage: the key and the address are in no error message or details', 
 
 // ---- step 3d: hasKey (imported inside the tests: the export does not exist yet) ----
 
-const hasKeyOf = async () => (await import('../scripts/lib/chatsend.mjs')).hasKey;
+const hasKeyOf = async () => (await import('../skills/kufar/scripts/lib/chatsend.mjs')).hasKey;
 
 test('hasKey: a key-shaped string -> true', async () => {
   const hasKey = await hasKeyOf();
@@ -484,7 +484,7 @@ test('hasKey: an empty string does not throw', async () => {
 
 // ---- step 3g: styleFlags and sendMessage with adId (imported inside the tests: not implemented yet) ----
 
-const styleFlagsOf = async () => (await import('../scripts/lib/chatsend.mjs')).styleFlags;
+const styleFlagsOf = async () => (await import('../skills/kufar/scripts/lib/chatsend.mjs')).styleFlags;
 
 test('styleFlags: an ordinary short chat text -> []', async () => {
   const styleFlags = await styleFlagsOf();

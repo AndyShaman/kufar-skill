@@ -6,7 +6,7 @@ import {
 } from './helpers.mjs';
 
 // the module does not exist yet: it is imported inside each test, so the old tests still load
-const edit = () => import('../scripts/lib/edit.mjs');
+const edit = () => import('../skills/kufar/scripts/lib/edit.mjs');
 
 const TOKEN = goodToken();
 const ID = '1000000001';

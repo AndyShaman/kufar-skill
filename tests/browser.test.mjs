@@ -6,7 +6,7 @@ import path from 'node:path';
 import {
   browserCandidates, findBrowser, displayAvailable, createPipeConnection, readKufarToken, waitForLogin, loginWindow,
   sweepLoginProfiles, loginWindowStatus, startLogin, runLoginWorker, stopLoginWindow,
-} from '../scripts/lib/browser.mjs';
+} from '../skills/kufar/scripts/lib/browser.mjs';
 import {
   tmpDir, rejectsCode, errText, goodToken, cookie, pipeEnds, fakeConn, kufarResponder, fakeBrowserProcess,
   processHandler, fakeClock, assertCookieRequestsSafe, failure, pollResponder, NOW, makeToken, DAY,

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { resolveStateDir, readJson, writeJsonAtomic, cached } from '../scripts/lib/storage.mjs';
+import { resolveStateDir, readJson, writeJsonAtomic, cached } from '../skills/kufar/scripts/lib/storage.mjs';
 import { tmpDir, throwsCode } from './helpers.mjs';
 
 test('resolveStateDir uses absolute KUFAR_STATE_DIR', () => {

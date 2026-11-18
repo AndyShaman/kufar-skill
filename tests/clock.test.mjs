@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { KufarError } from '../scripts/lib/errors.mjs';
-import { loadClock, ageByClock, CLOCK_TTL_MS, AGE_CAP_DAYS } from '../scripts/lib/clock.mjs';
+import { KufarError } from '../skills/kufar/scripts/lib/errors.mjs';
+import { loadClock, ageByClock, CLOCK_TTL_MS, AGE_CAP_DAYS } from '../skills/kufar/scripts/lib/clock.mjs';
 import { tmpDir, fakeTransport, pageOf, SEARCH_PATH, NOW, DAY, daysAgo } from './helpers.mjs';
 
 const T = NOW;

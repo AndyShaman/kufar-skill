@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   flattenCategories, findCategories, parentOf, listParams, findParamValues,
-} from '../scripts/lib/taxonomy.mjs';
+} from '../skills/kufar/scripts/lib/taxonomy.mjs';
 import { throwsCode } from './helpers.mjs';
 
 const TREE = {

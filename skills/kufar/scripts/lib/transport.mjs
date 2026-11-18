@@ -3,7 +3,7 @@ import { KufarError } from './errors.mjs';
 import { readJson, writeJsonAtomic } from './storage.mjs';
 
 const HOST = 'https://api.kufar.by';
-// a constant, not read from package.json: an installed skill holds only SKILL.md, scripts, references and assets
+// a constant, not read from package.json: an installed skill holds only SKILL.md, LICENSE, scripts and references
 export const VERSION = '0.1.0';
 const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 export const UUID_RE = new RegExp(`^${UUID}$`);

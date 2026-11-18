@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAdRef, normalizeAd } from '../scripts/lib/ads.mjs';
+import { parseAdRef, normalizeAd } from '../skills/kufar/scripts/lib/ads.mjs';
 import { RAW_AD, EXPECTED_AD, rawAd, throwsCode } from './helpers.mjs';
 
 test('parseAdRef accepts a bare number', () => {

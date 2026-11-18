@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveForm, findFormValues } from '../scripts/lib/form.mjs';
+import { resolveForm, findFormValues } from '../skills/kufar/scripts/lib/form.mjs';
 import { throwsCode } from './helpers.mjs';
 
 const V = { category: '2040', company_ad: '0' };
@@ -376,7 +376,7 @@ test('findFormValues: a value in a list longer than 40 is found from the full fi
 
 // ---- step 3d: typeField (imported inside the tests: the export does not exist yet) ----
 
-const typeFieldOf = async () => (await import('../scripts/lib/form.mjs')).typeField;
+const typeFieldOf = async () => (await import('../skills/kufar/scripts/lib/form.mjs')).typeField;
 
 test('typeField: returns name and url_name of the active description with is_type', async () => {
   const typeField = await typeFieldOf();

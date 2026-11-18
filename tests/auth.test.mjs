@@ -4,8 +4,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   parseToken, saveToken, loadToken, authStatus, logout,
-} from '../scripts/lib/auth.mjs';
-import * as authMod from '../scripts/lib/auth.mjs';
+} from '../skills/kufar/scripts/lib/auth.mjs';
+import * as authMod from '../skills/kufar/scripts/lib/auth.mjs';
 import {
   tmpDir, rejectsCode, throwsCode, NOW, DAY, makeToken, goodToken, GOOD_EXP_SEC, errText,
   liveToken, fakeFetch, emptyRes, jsonRes, headersOf, assertNoSignoutAll, hangUntilAbort,

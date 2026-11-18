@@ -4,10 +4,10 @@ import { createHash } from 'node:crypto';
 import {
   rejectsCode, throwsCode, errText, goodToken, fakeFetch, jsonRes, emptyRes, headersOf, hangUntilAbort,
 } from './helpers.mjs';
-import { VERSION } from '../scripts/lib/transport.mjs';
+import { VERSION } from '../skills/kufar/scripts/lib/transport.mjs';
 
 // the module does not exist yet: it is imported inside each test, so the old tests still load
-const manage = () => import('../scripts/lib/manage.mjs');
+const manage = () => import('../skills/kufar/scripts/lib/manage.mjs');
 
 const TOKEN = goodToken();
 const ID = '1000000001';

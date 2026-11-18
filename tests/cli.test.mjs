@@ -8,7 +8,7 @@ import { rawAdOf, CONV_ID, CONV_RAW, MSG_TEXT_RAW } from './helpers.mjs';
 import { photoDir, sizedJpeg, exif } from './photofix.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CLI = path.join(ROOT, 'scripts', 'kufar.mjs');
+const CLI = path.join(ROOT, 'skills', 'kufar', 'scripts', 'kufar.mjs');
 
 async function run(args) {
   const stateDir = await tmpDir();
@@ -1054,7 +1054,7 @@ test('kufar send --ad with a saved key and a text that holds the key -> TEXT_HAS
   assert.ok(!r.stdout.includes('вот мой ключ'), 'the text is in the output');
 });
 
-// ---- the installed skill: only SKILL.md, scripts, references and assets are copied ----
+// ---- the installed skill: only the folder skills/kufar is copied ----
 
 test('the utility runs from a folder that holds scripts only, without package.json', async (t) => {
   const { mkdtemp, cp, rm } = await import('node:fs/promises');
@@ -1062,7 +1062,7 @@ test('the utility runs from a folder that holds scripts only, without package.js
   const { join } = await import('node:path');
   const dir = await mkdtemp(join(tmpdir(), 'kufar-install-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  await cp(new URL('../scripts', import.meta.url), join(dir, 'scripts'), { recursive: true });
+  await cp(new URL('../skills/kufar/scripts', import.meta.url), join(dir, 'scripts'), { recursive: true });
   // its own state folder: a test never touches the real one
   const r = spawnSync(process.execPath, [join(dir, 'scripts', 'kufar.mjs'), 'nosuchcommand'], {
     encoding: 'utf8', env: { ...process.env, KUFAR_STATE_DIR: join(dir, 'state') },
@@ -1073,9 +1073,9 @@ test('the utility runs from a folder that holds scripts only, without package.js
 
 test('the version in the code is the version of package.json and of SKILL.md', async () => {
   const { readFile } = await import('node:fs/promises');
-  const { VERSION } = await import('../scripts/lib/transport.mjs');
+  const { VERSION } = await import('../skills/kufar/scripts/lib/transport.mjs');
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-  const skill = await readFile(new URL('../SKILL.md', import.meta.url), 'utf8');
+  const skill = await readFile(new URL('../skills/kufar/SKILL.md', import.meta.url), 'utf8');
   assert.equal(VERSION, pkg.version);
   assert.match(skill, new RegExp(`version: "${VERSION.replaceAll('.', '\\.')}"`));
 });
@@ -1083,7 +1083,7 @@ test('the version in the code is the version of package.json and of SKILL.md', a
 // ---- audit: login keeps the specific BAD_ARGS message ----
 
 test('kufar login --phone/--code with a bad value: BAD_ARGS carries the message of requestCode/confirmCode', async () => {
-  const { requestCode, confirmCode } = await import('../scripts/lib/codelogin.mjs');
+  const { requestCode, confirmCode } = await import('../skills/kufar/scripts/lib/codelogin.mjs');
   const messageOf = async (p) => {
     try { await p; } catch (e) { return e.message; }
     return assert.fail('no error');
@@ -1305,10 +1305,28 @@ test('kufar compare --cat: finds the listings, picks the best, compares them wit
   assert.ok(r.json.skipped && Array.isArray(r.json.skipped.too_cheap), r.stdout);
   assert.ok(r.json.stats, r.stdout);
   assert.deepEqual(r.json.ads.map((a) => a.id), r.json.picked.map((x) => x.id));
-  const item = await runFake(() => ['item', String(BEST_IDS[0])], { raw: BEST_RAWS });
+  // prices 300..380: by default the pick starts at the fast price, 320
+  assert.deepEqual(r.json.picked.map((x) => x.id), BEST_IDS.slice(1, 4).map(String));
+  assert.equal(r.json.skipped.cheaper, 1);
+  const item = await runFake(() => ['item', String(BEST_IDS[1])], { raw: BEST_RAWS });
   assert.equal(item.status, 0, item.stdout);
   assert.deepEqual(r.json.ads[0], item.json.ad);
   assert.ok('flags' in r.json.ads[0]);
+});
+
+test('kufar compare --cat --pick cheap: the cheapest listings are picked', async () => {
+  const r = await bestRun('--cat', '17010', '--query', 'iphone', '--pick', 'cheap');
+  assert.equal(r.status, 0, r.stdout);
+  assert.deepEqual(r.json.picked.map((x) => x.id), BEST_IDS.slice(0, 3).map(String));
+  assert.equal(r.json.skipped.cheaper, 0);
+});
+
+test('kufar compare: --pick with another value or together with refs -> BAD_ARGS', async () => {
+  for (const args of [['--cat', '17010', '--query', 'iphone', '--pick', 'best'], [String(BEST_IDS[0]), String(BEST_IDS[1]), '--pick', 'cheap']]) {
+    const r = await bestRun(...args);
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.json.error.code, 'BAD_ARGS');
+  }
 });
 
 test('kufar compare --cat --top 2: two listings are picked', async () => {
