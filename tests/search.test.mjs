@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildSearchQuery, search, flagAds, ageDays, STALE_DAYS, BUMP_GAP_DAYS,
+  buildSearchQuery, search, flagAds, ageDays, STALE_DAYS, BUMP_GAP_DAYS, defectIn,
 } from '../scripts/lib/search.mjs';
 import {
   rejectsCode, throwsCode, plain, mkAd, rawAd, fakeTransport, SEARCH_PATH, NOW, DAY, daysAgo, CLOCK,
@@ -314,7 +314,7 @@ test('search passes clock to the flags', async () => {
 });
 
 // suspect_text: a body that says the thing is broken or for parts
-const SUSPECT_BODY_PHRASES = ['запчаст', 'на разбор', 'на детали', 'заблокирован', 'не включается', 'под восстановление', 'не работает', 'не реагирует', 'неисправ', 'разбит', 'треснул', 'требует ремонта'];
+const SUSPECT_BODY_PHRASES = ['на запчасти', 'под запчасти', 'по запчастям', 'на разбор', 'под разбор', 'на детали', 'заблокирован', 'не включается', 'под восстановление', 'не работает', 'не работают', 'не реагирует', 'неисправен', 'разбит', 'треснул', 'треснуто стекло', 'трещина', 'требует ремонта', 'нужен ремонт', 'под ремонт', 'не заводится', 'не на ходу', 'после дтп'];
 
 test('flagAds: a suspect body sets suspect_text and not suspect_title', () => {
   const [a] = flagAds([mkAd(1, 100, { body: 'Заблокирован, на запчасти' })], NOW);
@@ -327,6 +327,32 @@ test('flagAds: each suspect body phrase alone sets suspect_text', () => {
     assert.ok(flagAds([mkAd(1, 100, { body: `Продаю, ${w}, торг` })], NOW)[0].flags.includes('suspect_text'), w);
   }
   assert.ok(flagAds([mkAd(1, 100, { body: 'Дисплей бывает НЕ РЕАГИРУЕТ на касание' })], NOW)[0].flags.includes('suspect_text'));
+});
+
+test('flagAds: a defect that the text denies is not a defect', () => {
+  for (const body of ['Не заблокирован, iCloud чистый', 'Экран не разбит и не треснул', 'Без трещин и сколов', 'Трещин нет, сколов нет',
+    'Неисправностей нет', 'Ни разу не разбит', 'Нет трещин']) {
+    assert.ok(!flagAds([mkAd(1, 100, { body })], NOW)[0].flags.includes('suspect_text'), body);
+  }
+});
+
+test('flagAds: a denied defect next to a named one is still a defect', () => {
+  assert.ok(flagAds([mkAd(1, 100, { body: 'Не заблокирован, но экран разбит' })], NOW)[0].flags.includes('suspect_text'));
+});
+
+test('flagAds: spare parts that come with the thing are not a defect', () => {
+  for (const body of ['Запчасти в подарок', 'Все запчасти оригинальные, обслужен', 'Разблокирован, работает с любой сим-картой']) {
+    assert.ok(!flagAds([mkAd(1, 100, { body })], NOW)[0].flags.includes('suspect_text'), body);
+  }
+});
+
+test('defectIn: the piece of the text that names the defect, null for a clean text or no text', () => {
+  const found = defectIn('Продаю айфон, пользовался год. Не работает Face ID, в остальном всё хорошо, торг уместен у телефона при встрече в Минске');
+  assert.ok(found.includes('Не работает Face ID'), found);
+  assert.ok(found.length <= 90, found);
+  assert.equal(defectIn('Отличное состояние, не заблокирован'), null);
+  assert.equal(defectIn(null), null);
+  assert.equal(defectIn(undefined), null);
 });
 
 test('flagAds: (guard) title words are not body words', () => {

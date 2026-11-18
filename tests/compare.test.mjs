@@ -319,6 +319,79 @@ test('compareBest: a picked listing whose card is gone goes to missing and is ab
   assert.equal(r.count, 2);
 });
 
+// a market where some cards say in their text that the thing is broken
+function defectMarket(bodies, ids = BIDS) {
+  return fakeTransport((p) => {
+    const id = itemIdOf(p);
+    if (!id) return pageOf(ids.map((x) => BRAW[x]), ids.length);
+    return { result: { ...BRAW[id], body: bodies[id] ?? 'Отличное состояние, полный комплект' } };
+  });
+}
+
+test('compareBest: a card whose text names a defect leaves the pick, the next cheapest takes its place', async () => {
+  const tr = defectMarket({ [BIDS[0]]: 'Экран разбит, на запчасти', [BIDS[2]]: 'Не включается после воды' });
+  const r = await bestOf(tr);
+  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[1]}`, `${BIDS[3]}`, `${BIDS[4]}`]);
+  assert.deepEqual(r.ads.map((a) => a.id), r.picked.map((x) => x.id));
+  assert.equal(r.count, 3);
+  assert.deepEqual(r.skipped.defect.map((x) => x.id), [`${BIDS[0]}`, `${BIDS[2]}`]);
+  assert.deepEqual(Object.keys(r.skipped.defect[0]).sort(), ['found', 'id', 'price_byn', 'url']);
+  assert.equal(r.skipped.defect[0].price_byn, BPRICES[0]);
+  assert.equal(r.skipped.defect[0].url, `https://www.kufar.by/item/${BIDS[0]}`);
+  assert.ok(r.skipped.defect[0].found.includes('разбит'), r.skipped.defect[0].found);
+  // seven candidates: three picked, two with a defect, two not looked at
+  assert.equal(r.skipped.other, 2);
+  assert.equal(r.skipped.stale, 0);
+});
+
+test('compareBest: without defects skipped.defect is an empty list and the counts are those of pickBest', async () => {
+  const r = await bestOf(defectMarket({}));
+  assert.deepEqual(r.skipped.defect, []);
+  assert.equal(r.skipped.other, 4);
+});
+
+test('compareBest: a defect the text denies does not move the card out', async () => {
+  const r = await bestOf(defectMarket({ [BIDS[0]]: 'Не заблокирован, трещин нет' }));
+  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[0]}`, `${BIDS[1]}`, `${BIDS[2]}`]);
+  assert.deepEqual(r.skipped.defect, []);
+});
+
+test('compareBest: no more than three cards per place are opened; what is found by then is the answer', async () => {
+  const bad = Object.fromEntries(BIDS.slice(0, 4).map((id) => [id, 'На запчасти']));
+  const tr = defectMarket(bad);
+  const r = await bestOf(tr, { top: 2 });
+  assert.equal(tr.calls.filter((c) => itemIdOf(c.path)).length, 6);
+  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[4]}`, `${BIDS[5]}`]);
+  assert.equal(r.skipped.defect.length, 4);
+  assert.equal(r.skipped.other, 1);
+});
+
+test('compareBest: fewer than two cards without a defect -> NOT_ENOUGH with found and the defect cards', async () => {
+  const bad = Object.fromEntries(BIDS.slice(0, 6).map((id) => [id, 'Не работает экран']));
+  const tr = defectMarket(bad);
+  await assert.rejects(bestOf(tr, { top: 2 }), (e) => {
+    assert.equal(e.code, 'NOT_ENOUGH');
+    assert.equal(e.details.found, 0);
+    assert.equal(e.details.total_on_site, BIDS.length);
+    assert.deepEqual(e.details.defect.map((x) => x.id), BIDS.slice(0, 6).map(String));
+    return true;
+  });
+  assert.equal(tr.calls.filter((c) => itemIdOf(c.path)).length, 6);
+});
+
+test('compareBest: a card that is gone still takes its place, a defect card does not', async () => {
+  const tr = fakeTransport((p) => {
+    const id = itemIdOf(p);
+    if (!id) return pageOf(BIDS.map((x) => BRAW[x]), BIDS.length);
+    if (id === `${BIDS[1]}`) throw new KufarError('NOT_FOUND', 'Не найдено', { status: 404 });
+    return { result: { ...BRAW[id], body: id === `${BIDS[0]}` ? 'Под восстановление' : 'Всё работает' } };
+  });
+  const r = await bestOf(tr);
+  assert.deepEqual(r.missing, [`${BIDS[1]}`]);
+  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[2]}`, `${BIDS[3]}`]);
+  assert.deepEqual(r.skipped.defect.map((x) => x.id), [`${BIDS[0]}`]);
+});
+
 test('compareBest: fewer than 2 picked -> NOT_ENOUGH with found and total_on_site, no card is requested', async () => {
   const tr = bestMarket([], [BIDS[0]], 1);
   await assert.rejects(bestOf(tr), (e) => {
