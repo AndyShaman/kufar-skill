@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compareAds, compare, pickBest, compareBest } from '../scripts/lib/compare.mjs';
-import { normalizeAd } from '../scripts/lib/ads.mjs';
-import { KufarError } from '../scripts/lib/errors.mjs';
+import { compareAds, compare, pickBest, compareBest } from '../skills/kufar/scripts/lib/compare.mjs';
+import { normalizeAd } from '../skills/kufar/scripts/lib/ads.mjs';
+import { KufarError } from '../skills/kufar/scripts/lib/errors.mjs';
 import { mkAd, rawAdOf, fakeTransport, itemIdOf, rejectsCode, pageOf, SEARCH_PATH, NOW, CLOCK } from './helpers.mjs';
 
 const P = (value, text, label = null) => ({ label, value, text, filter: null });
@@ -207,7 +207,7 @@ test('pickBest: too_cheap entries carry id, price_byn and url only', () => {
 test('pickBest: the result has exactly median, picked, skipped', () => {
   const r = pickBest(estimateOf(400, [[300], [350]]), 3);
   assert.deepEqual(Object.keys(r).sort(), ['median', 'picked', 'skipped']);
-  assert.deepEqual(Object.keys(r.skipped).sort(), ['other', 'stale', 'too_cheap']);
+  assert.deepEqual(Object.keys(r.skipped).sort(), ['cheaper', 'other', 'stale', 'too_cheap']);
 });
 
 test('pickBest: not stale listings come first, the cheapest stale ones fill the rest', () => {
@@ -273,7 +273,8 @@ const BIDS = [0, 1, 2, 3, 4, 5, 6].map((i) => 1000000010 + i);
 const BPRICES = [300, 320, 340, 360, 380, 400, 420];
 const BRAW = Object.fromEntries(BIDS.map((id, i) => [id, rawAdOf({ id, price: BPRICES[i] })]));
 const OPTS = { cat: '17010', params: { phm: '5380' } };
-const bestOf = (tr, over = {}) => compareBest(tr, OPTS, { top: 3, now: () => NOW, clock: CLOCK, ...over });
+// the tests below describe the cheapest pick
+const bestOf = (tr, over = {}) => compareBest(tr, OPTS, { top: 3, pick: 'cheap', now: () => NOW, clock: CLOCK, ...over });
 
 function bestMarket(gone = [], ids = BIDS, total = ids.length) {
   return fakeTransport((p) => {
@@ -319,6 +320,37 @@ test('compareBest: a picked listing whose card is gone goes to missing and is ab
   assert.equal(r.count, 2);
 });
 
+// ---- the pick by default: a good thing for normal money ----
+
+// the prices are 300..420: the lower quarter is 330, the middle 360
+test('compareBest: by default the pick starts at the fast price, cheaper listings are counted and not opened', async () => {
+  const tr = bestMarket();
+  const r = await compareBest(tr, OPTS, { top: 3, now: () => NOW, clock: CLOCK });
+  const expected = BIDS.filter((_, i) => BPRICES[i] >= 330).slice(0, 3).map(String);
+  assert.deepEqual(r.picked.map((x) => x.id), expected);
+  assert.equal(r.skipped.cheaper, 2);
+  assert.deepEqual(tr.calls.filter((c) => itemIdOf(c.path)).map((c) => itemIdOf(c.path)), expected);
+});
+
+test('compareBest: pick fair is the default, pick cheap opens the cheapest, another value is BAD_ARGS', async () => {
+  const fair = await compareBest(bestMarket(), OPTS, { top: 3, pick: 'fair', now: () => NOW, clock: CLOCK });
+  const byDefault = await compareBest(bestMarket(), OPTS, { top: 3, now: () => NOW, clock: CLOCK });
+  assert.deepEqual(fair.picked, byDefault.picked);
+  const cheap = await compareBest(bestMarket(), OPTS, { top: 3, pick: 'cheap', now: () => NOW, clock: CLOCK });
+  assert.deepEqual(cheap.picked.map((x) => x.id), BIDS.slice(0, 3).map(String));
+  assert.equal(cheap.skipped.cheaper, 0);
+  await rejectsCode(compareBest(bestMarket(), OPTS, { top: 3, pick: 'best', now: () => NOW, clock: CLOCK }), 'BAD_ARGS');
+});
+
+test('pickBest: with a floor, listings below it and above half the middle are counted as cheaper', () => {
+  const r = pickBest(estimateOf(400, [[150], [250], [300], [380], [420], [450]]), 2, 350);
+  assert.deepEqual(r.picked.map((x) => x.id), [idAt(3), idAt(4)]);
+  assert.equal(r.skipped.cheaper, 2);
+  assert.deepEqual(r.skipped.too_cheap.map((x) => x.id), [idAt(0)]);
+  assert.equal(r.skipped.other, 1);
+  assert.equal(pickBest(estimateOf(400, [[250], [380]]), 2).skipped.cheaper, 0);
+});
+
 // a market where some cards say in their text that the thing is broken
 function defectMarket(bodies, ids = BIDS) {
   return fakeTransport((p) => {
@@ -343,7 +375,7 @@ test('compareBest: a card whose text names a defect is not dropped: it goes afte
   // seven candidates: five opened, two not looked at
   assert.equal(r.skipped.other, 2);
   assert.equal(r.skipped.stale, 0);
-  assert.deepEqual(Object.keys(r.skipped).sort(), ['other', 'stale', 'too_cheap']);
+  assert.deepEqual(Object.keys(r.skipped).sort(), ['cheaper', 'other', 'stale', 'too_cheap']);
 });
 
 test('compareBest: without defects every picked card has defect null and the counts are those of pickBest', async () => {
