@@ -4,6 +4,8 @@ import { search, flagAds, STALE_DAYS } from './search.mjs';
 import { priceStats, cleanForPricing, reliability, position } from './stats.mjs';
 
 const NOTE = 'Это цены объявлений, а не сделок.';
+// filters every category has (condition, private or company, delivery, town): they narrow a group but do not say what the goods are
+const GENERAL = new Set(['cnd', 'cmp', 'dle', 'ar']);
 
 // a requested filter value contradicts the ad's value; ranges ("r:…") never do
 function contradicts(wanted, value) {
@@ -35,12 +37,12 @@ export async function estimatePrice(transport, { cat, params = {}, query, region
     params = { ...params, ...own };
   }
   if (!cat) throw new KufarError('BAD_ARGS', 'Нужна рубрика (--cat) или объявление (--like)');
-  const byWords = Object.keys(params).length === 0;
+  const byWords = Object.keys(params).every((code) => GENERAL.has(code));
   if (byWords && !query) {
-    throw new KufarError('BAD_ARGS', 'Нужны характеристики (--param) или слова (--query): цена по целой рубрике бессмысленна');
+    throw new KufarError('BAD_ARGS', 'Нужны характеристики товара (--param) или слова (--query): цена по целой рубрике бессмысленна');
   }
 
-  const base = byWords ? { cat, query, regions, sort: 'new', limit: 200 } : { cat, params, regions, sort: 'new', limit: 200 };
+  const base = byWords ? { cat, query, params, regions, sort: 'new', limit: 200 } : { cat, params, regions, sort: 'new', limit: 200 };
   const notSubject = (ads) => ads.filter((a) => a.id !== subjectAd?.id);
 
   const fresh = await search(transport, base, { now, clock });

@@ -218,25 +218,27 @@ export async function insertAd({ token, ad, fetchImpl = globalThis.fetch, timeou
   throw unconfirmed();
 }
 
-// the record of the last submission keeps a rerun after a broken run from posting a second ad
+// the record of the day's submissions keeps a rerun from posting a second ad, also after other ads were posted in between
 export async function submitAd({ stateDir, code, ad, photos, token, fetchImpl = globalThis.fetch, now = Date.now }) {
   const file = path.join(stateDir, 'post-last.json');
-  const last = await readJson(file, null);
-  if (last?.code === code && typeof last.at === 'number' && now() - last.at <= DAY) {
+  const saved = await readJson(file, []);
+  const others = (Array.isArray(saved) ? saved : []).filter((e) => typeof e?.at === 'number' && now() - e.at <= DAY);
+  const last = others.find((e) => e.code === code);
+  if (last) {
     if (last.ad_id) throw new KufarError('ALREADY_POSTED', 'Это объявление уже подано', { ad_id: last.ad_id });
     throw unconfirmed();
   }
   const images = [];
   for (const p of photos) images.push(await uploadPhoto({ token, data: p.data, ext: p.ext, fetchImpl }));
   const at = now();
-  await writeJsonAtomic(file, { code, at });
+  await writeJsonAtomic(file, [...others, { code, at }]);
   const body = images.length ? { ...ad, images, is_new_image: images.map(() => true) } : ad;
   try {
     const result = await insertAd({ token, ad: body, fetchImpl });
-    await writeJsonAtomic(file, { code, at, ad_id: result.ad_id });
+    await writeJsonAtomic(file, [...others, { code, at, ad_id: result.ad_id }]);
     return result;
   } catch (e) {
-    if (e.code === 'POST_REFUSED' || e.code === 'POST_FAILED') await fs.rm(file, { force: true });
+    if (e.code === 'POST_REFUSED' || e.code === 'POST_FAILED') await writeJsonAtomic(file, others);
     throw e;
   }
 }

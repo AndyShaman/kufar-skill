@@ -21,7 +21,7 @@ export function hasKey(text, token) {
 }
 
 export function checkText(text, token) {
-  if (typeof text !== 'string') throw bad('Нужен текст сообщения: --text "<текст>"');
+  if (typeof text !== 'string') throw bad("Нужен текст сообщения: --text '<текст>'");
   const t = text.trim();
   if (!t) throw bad('Текст сообщения пустой');
   if (t.length > MAX_TEXT) throw bad(`Текст сообщения длиннее ${MAX_TEXT} знаков`);
@@ -33,6 +33,13 @@ export function checkText(text, token) {
 
 export function confirmCode(conversationId, text) {
   return createHash('sha256').update(`${conversationId.toLowerCase()}\n${text}`).digest('hex').slice(0, 12);
+}
+
+// the newest message of the dialog is mine, says the same and is under a day old: the text has been sent already
+export function repeatsLast(lastMine, text, now = Date.now()) {
+  if (!lastMine || lastMine.text !== text) return false;
+  const at = Date.parse(lastMine.at);
+  return Number.isNaN(at) || now - at <= 24 * 60 * 60 * 1000;
 }
 
 const FORMAL = ['заинтересовал', 'подскажите, пожалуйста', 'буду признател', 'буду благодар', 'заранее благодар', 'заранее спасибо',

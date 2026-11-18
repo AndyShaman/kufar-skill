@@ -6,6 +6,9 @@ const SORTS = { new: 'lst.d', old: 'lst.a', cheap: 'prc.a', expensive: 'prc.d' }
 const RESERVED = new Set(['cat', 'query', 'lang', 'sort', 'size', 'cursor', 'prc', 'rgn']);
 const MAX_KOPECKS = 2000000000;
 const SUSPECT_WORDS = ['запчаст', 'на разбор', 'на детали', 'куплю', 'заблокирован', 'icloud', 'не включается', 'под восстановление'];
+// the text of a card is longer than a title: «icloud чистый» and «куплю» in it say nothing, a defect does
+const SUSPECT_TEXT = ['запчаст', 'на разбор', 'на детали', 'заблокирован', 'не включается', 'под восстановление',
+  'не работает', 'не реагирует', 'неисправ', 'разбит', 'треснул', 'требует ремонта'];
 
 const bad = (message, details) => new KufarError('BAD_ARGS', message, details);
 
@@ -67,10 +70,12 @@ export function ageDays(listedAt, now) {
 export async function search(transport, opts, { now = Date.now, clock = null } = {}) {
   const query = buildSearchQuery(opts);
   const raw = await transport.getJson('/search-api/v2/search/rendered-paginated', query);
+  // an empty result is a list too: without one the answer is not a search result
+  if (!Array.isArray(raw?.ads)) throw new KufarError('BAD_RESPONSE', 'В ответе Куфара нет списка объявлений');
   const pages = raw.pagination?.pages ?? [];
   return {
     total: raw.total ?? 0,
-    ads: flagAds((raw.ads ?? []).map(normalizeAd), now(), clock),
+    ads: flagAds(raw.ads.map(normalizeAd), now(), clock),
     next_cursor: pages.find((p) => p.label === 'next')?.token || null,
     pages: pages.filter((p) => p.token).map((p) => ({ num: p.num, cursor: p.token })),
   };
@@ -84,6 +89,9 @@ export function flagAds(ads, now = Date.now(), clock = null) {
     if (ad.type !== 'sell') flags.push('not_sell');
     const title = String(ad.title ?? '').toLowerCase();
     if (SUSPECT_WORDS.some((w) => title.includes(w))) flags.push('suspect_title');
+    // only a card carries its text; a search result does not
+    const body = typeof ad.body === 'string' ? ad.body.toLowerCase() : '';
+    if (SUSPECT_TEXT.some((w) => body.includes(w))) flags.push('suspect_text');
     if (ad.seller_key) {
       const key = `${ad.seller_key}\u0000${title.trim()}\u0000${ad.price_byn}`;
       if (seen.has(key)) flags.push('duplicate');

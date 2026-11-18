@@ -17,7 +17,7 @@ import { saveToken, loadToken, authStatus, logout, sweepIdleKey, idleError } fro
 import { startLogin, runLoginWorker, loginWindowStatus, stopLoginWindow, sweepLoginProfiles } from './lib/browser.mjs';
 import { requestCode, confirmCode } from './lib/codelogin.mjs';
 import { myListings, inbox, chat, sendTarget, newDialogTarget, STATUSES } from './lib/account.mjs';
-import { checkText, hasKey, confirmCode as previewCode, sendMessage, styleFlags } from './lib/chatsend.mjs';
+import { checkText, hasKey, confirmCode as previewCode, repeatsLast, sendMessage, styleFlags } from './lib/chatsend.mjs';
 import { UUID_RE } from './lib/transport.mjs';
 import { resolveForm, findFormValues, typeField } from './lib/form.mjs';
 import { SERVICE_KEYS, buildAd, maskContact, maskEmail, photoInfo, postCode, submitAd, titleHints } from './lib/post.mjs';
@@ -211,12 +211,12 @@ async function send(args) {
   }
   if (adId === undefined && !UUID_RE.test(id)) throw bad('Нужен номер диалога (id из inbox)');
   if (adId !== undefined && !/^\d+$/.test(adId)) throw bad('--ad: номер объявления из цифр');
-  if (values.text === undefined) throw bad('Нужен текст: --text "<текст>"');
+  if (values.text === undefined) throw bad("Нужен текст: --text '<текст>'");
   if (values.confirm !== undefined && !/^[0-9a-f]{12}$/.test(values.confirm)) throw bad('--confirm: код из 12 знаков 0-9a-f из предпросмотра');
   const ctx = getCtx();
   const token = await ctx.getToken();
   const text = checkText(values.text, token);
-  const target = adId === undefined ? await sendTarget(ctx.transport, id) : await newDialogTarget(ctx.transport, adId);
+  const { last_mine: lastMine, ...target } = adId === undefined ? await sendTarget(ctx.transport, id) : await newDialogTarget(ctx.transport, adId);
   const code = adId === undefined ? previewCode(id, text) : previewCode(`ad:${adId}`, text);
   if (values.confirm === undefined) {
     const style = styleFlags(text);
@@ -226,6 +226,11 @@ async function send(args) {
   }
   if (values.confirm !== code) {
     throw new KufarError('CONFIRM_MISMATCH', 'Диалог или текст не совпадают с предпросмотром. Покажите пользователю новый предпросмотр');
+  }
+  // a rerun of a command that has gone through would send the text a second time, and a message cannot be deleted
+  if (repeatsLast(lastMine, text)) {
+    throw new KufarError('ALREADY_SENT', 'Последнее сообщение в этом диалоге уже ваше, с тем же текстом: второй раз утилита его не отправляет',
+      { at: lastMine.at });
   }
   if (adId !== undefined) {
     const sent = await sendMessage({ token, adId, text });
@@ -474,6 +479,7 @@ async function edit(args) {
         changes: changed.map((c) => {
           if (c.name === 'price') return { name: c.name, label: 'Цена', from: rubles(c.from), to: rubles(c.to) };
           if (c.name === 'photos') return { name: c.name, label: 'Фото', from: c.from, to: c.to };
+          if (c.name === 'email') return { name: c.name, label: 'Почта', from: null, to: maskEmail(c.to) };
           const f = all.find((x) => x.name === c.name);
           return { name: c.name, label: f.label, from: shown(f, c.from), to: shown(f, c.to) };
         }),
@@ -630,9 +636,10 @@ async function run(argv) {
       const stateDir = resolveStateDir();
       const status = await authStatus(stateDir);
       // the path is for moving the key to a server; the content is never printed
-      if (status.logged_in) return { ...status, auth_file: path.resolve(stateDir, 'auth.json') };
-      const shown = idleRemoved ? { ...status, idle_removed: true } : status;
+      // next to an old key a new login may still be waiting or have failed: the old account is the one in use
       const loginState = await loginWindowStatus(stateDir);
+      const shown = status.logged_in ? { ...status, auth_file: path.resolve(stateDir, 'auth.json') }
+        : idleRemoved ? { ...status, idle_removed: true } : status;
       return loginState ? { ...shown, login: loginState } : shown;
     }
     case 'my': {

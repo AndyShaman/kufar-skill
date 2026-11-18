@@ -119,12 +119,13 @@ export async function myListings(transport, { status = 'active', limit = 50, off
   const counts = Object.fromEntries(STATUSES.map((s) => [s, 0]));
   for (const c of raw) if (STATUSES.includes(c?.status)) counts[c.status] = Number(c.value) || 0;
   const items = await transport.getJson('/my-items-v2/v2/items', { status, limit, offset, stats: 1 });
-  return {
-    counts,
-    status,
-    total: Number(items?.total) || 0,
-    ads: Array.isArray(items?.ads) ? items.ads.map(normalizeMyAd) : [],
-  };
+  const total = Number(items?.total) || 0;
+  // an empty page comes without ads; anything else without a list is not the answer the utility knows
+  const empty = items?.ads === undefined && total <= offset;
+  if (!isObject(items) || !(Array.isArray(items.ads) || empty)) {
+    throw new KufarError('BAD_RESPONSE', 'В ответе Куфара нет списка объявлений');
+  }
+  return { counts, status, total, ads: (items.ads ?? []).map(normalizeMyAd) };
 }
 
 export async function inbox(transport, { limit = 30, offset = 0, unread = false } = {}) {
@@ -177,7 +178,10 @@ export async function sendTarget(transport, id) {
   if (!raw?.conversation_info) throw new KufarError('BAD_RESPONSE', 'В ответе Куфара нет данных диалога');
   const c = normalizeConversation(raw.conversation_info);
   if (c.blocked) throw new KufarError('CHAT_BLOCKED', 'Диалог заблокирован, написать в него нельзя');
-  return { conversation_id: id, to: c.with, ad: c.ad };
+  // Kufar answers newest first; the newest message tells a repeated send from a new one
+  const m = raw.messages?.[0];
+  const last_mine = m?.is_mine === true && typeof m.text === 'string' ? { text: m.text.trim(), at: m.created_at ?? null } : null;
+  return { conversation_id: id, to: c.with, ad: c.ad, last_mine };
 }
 
 export async function newDialogTarget(transport, adId) {

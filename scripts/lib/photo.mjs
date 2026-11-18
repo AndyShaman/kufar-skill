@@ -100,8 +100,17 @@ function cleanJpeg(data) {
     } else if (marker === 0xe1) found.add('xmp');
     else if (marker === 0xed) found.add('iptc');
     else if (marker === 0xfe) found.add('comment');
-    // of the application segments a picture needs JFIF, the colour profile and the Adobe colour note
-    else if (marker >= 0xe0 && marker <= 0xef && marker !== 0xe0 && marker !== 0xee
+    else if (marker === 0xe0) {
+      // APP0 stays only as the JFIF header: its own thumbnail and the JFXX one are small copies of the picture
+      if (payload.length < 14 || payload.toString('latin1', 0, 5) !== 'JFIF\0') found.add('other');
+      else if (payload.length === 14 && payload[12] === 0 && payload[13] === 0) kept.push(segment);
+      else {
+        found.add('other');
+        kept.push(Buffer.concat([Buffer.from([0xff, 0xe0, 0x00, 0x10]), payload.subarray(0, 12), Buffer.from([0, 0])]));
+      }
+    }
+    // of the other application segments a picture needs the colour profile and the Adobe colour note
+    else if (marker >= 0xe1 && marker <= 0xef && marker !== 0xee
       && !(marker === 0xe2 && payload.toString('latin1', 0, 12) === 'ICC_PROFILE\0')) found.add('other');
     else kept.push(segment);
   }

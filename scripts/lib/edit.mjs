@@ -105,6 +105,9 @@ export function buildEdit({ saved, changes, fields, savedFields, type, email }) 
   if ((savedPrice ?? null) !== (ad.price ?? null)) changed.push({ name: 'price', from: savedPrice ?? null, to: ad.price ?? null });
   if (!same(photos, images.map((i) => ({ path: i.path })))) changed.push({ name: 'photos', from: images.length, to: photos.length });
 
+  // Kufar does not give the saved email back, so a new one is a change with nothing to compare it to
+  if ('email' in changes) changed.push({ name: 'email', from: null, to: ad.email });
+
   if (!changed.length) throw new KufarError('NO_CHANGES', 'Изменений нет: объявление уже такое');
   return { ad, photos, changed };
 }

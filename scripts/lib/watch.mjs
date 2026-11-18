@@ -112,21 +112,25 @@ export async function trackCheck(ctx) {
   const changes = [];
   let checked = 0;
   for (const [id, e] of Object.entries(list)) {
-    if (e.gone_at) continue;
     checked++;
     let ad;
     try {
       ad = await fetchAd(ctx.transport, id);
     } catch (err) {
       if (err.code !== 'NOT_FOUND') throw err;
-      e.gone_at = iso(ctx);
-      changes.push({ id, title: e.title, url: e.url, change: 'gone' });
+      // reported once; asked again on every check, since a seller may put the listing back
+      if (!e.gone_at) {
+        e.gone_at = iso(ctx);
+        changes.push({ id, title: e.title, url: e.url, change: 'gone' });
+      }
       continue;
     }
+    const back = Boolean(e.gone_at);
+    e.gone_at = null;
     const old_price = lastPrice(e);
-    if (ad.price_byn !== old_price) {
-      e.history.push({ at: iso(ctx), price_byn: ad.price_byn });
-      changes.push({ id, title: e.title, url: e.url, change: 'price', old_price, price_byn: ad.price_byn });
+    if (ad.price_byn !== old_price) e.history.push({ at: iso(ctx), price_byn: ad.price_byn });
+    if (back || ad.price_byn !== old_price) {
+      changes.push({ id, title: e.title, url: e.url, change: back ? 'back' : 'price', old_price, price_byn: ad.price_byn });
     }
   }
   await writeJsonAtomic(trackedFile(ctx), list);
