@@ -1484,7 +1484,8 @@ test('kufar price: comparables_total by default, --full gives the answer without
 });
 
 test('kufar search: a page is 20 listings by default, --limit sets another size', async () => {
-  const sizeOf = (r) => r.requests.find((q) => q.path === '/search-api/v2/search/rendered-paginated').size;
+  // the last search request is the command's own; the ones before it set the clock
+  const sizeOf = (r) => r.requests.filter((q) => q.path === '/search-api/v2/search/rendered-paginated').at(-1).size;
   assert.equal(sizeOf(await runFake(() => ['search', '--cat', '17010'])), '20');
   assert.equal(sizeOf(await runFake(() => ['search', '--cat', '17010', '--limit', '50'])), '50');
 });

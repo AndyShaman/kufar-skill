@@ -9,7 +9,9 @@ export function briefAd(ad) {
     const text = p.text ?? p.value;
     // Kufar gives some values as a row of empty places
     if (!/[\p{L}\p{N}]/u.test(String(text))) continue;
-    short[p.label in short ? `${p.label} (${p.filter})` : p.label] = text;
+    // a long list (what a flat has in the kitchen) is cut: the card has it whole
+    const value = typeof text === 'string' && text.length > 60 ? `${text.slice(0, 60).replace(/[\s,;]+\S*$/, '')}…` : text;
+    short[p.label in short ? `${p.label} (${p.filter})` : p.label] = value;
   }
   return { ...rest, photos: images?.length ?? 0, params: short };
 }

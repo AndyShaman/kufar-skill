@@ -112,7 +112,12 @@ export function flagAds(ads, now = Date.now(), clock = null, want = 'sell') {
     if (ad.price_byn === null) flags.push('no_price');
     if (ad.type !== want) flags.push('not_sell');
     const title = String(ad.title ?? '').toLowerCase();
-    if (SUSPECT_WORDS.some((w) => title.includes(w))) flags.push('suspect_title');
+    // «не донор», «не на запчасти» deny the word
+    const named = (w) => {
+      const at = title.indexOf(w);
+      return at >= 0 && !/(?:^|[^а-яё])(?:не|без)\s+(?:(?:на|под)\s+)?$/.test(title.slice(0, at));
+    };
+    if (SUSPECT_WORDS.some(named)) flags.push('suspect_title');
     // only a card carries its text; a search result does not
     if (defectIn(ad.body)) flags.push('suspect_text');
     // a car to order is not in the country yet, its price usually leaves out delivery and customs

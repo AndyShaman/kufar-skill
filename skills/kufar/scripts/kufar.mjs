@@ -586,7 +586,8 @@ async function run(argv) {
     }
     case 'search': {
       const { values } = parse(rest, SEARCH_OPTIONS);
-      const opts = { ...filterOpts(values), sort: values.sort, limit: num(values.limit, '--limit'), cursor: values.cursor };
+      // a first page for a first answer; more is asked for with --limit
+      const opts = { ...filterOpts(values), sort: values.sort, limit: num(values.limit, '--limit') ?? 20, cursor: values.cursor };
       buildSearchQuery(opts);
       const ctx = await getClockCtx();
       const r = await search(ctx.transport, opts, { now: ctx.now, clock: ctx.clock });
