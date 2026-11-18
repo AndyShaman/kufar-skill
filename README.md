@@ -192,6 +192,10 @@ Andy Shaman: [GitHub](https://github.com/AndyShaman), сайт [ai-handler.com](
 
 Нашли ошибку - напишите [issue](https://github.com/AndyShaman/kufar-skill/issues) и приложите команду и ответ скилла (без ключа и личных данных).
 
+## Благодарности
+
+Архитектура подсмотрена у [maddness/avito-skill](https://github.com/maddness/avito-skill), скилла для Авито: один файл инструкций и одна программа без зависимостей. Код и логика свои.
+
 ## Лицензия
 
 MIT, см. [LICENSE](LICENSE).
@@ -203,3 +207,5 @@ Kufarych is an agent skill for Kufar.by, the Belarusian classifieds marketplace.
 It works with any agent that can run shell commands (Claude Code, Codex and others), needs Node.js 22 or newer and has no dependencies: no server, no bot, no MCP. Unofficial, not affiliated with Kufar. The skill's instructions are written in Russian.
 
 Install: tell your agent "Install the kufar skill from https://github.com/AndyShaman/kufar-skill", or run `npx skills add AndyShaman/kufar-skill`, or copy the `skills/kufar` folder into your agent's skills folder.
+
+The architecture is inspired by [maddness/avito-skill](https://github.com/maddness/avito-skill), a skill for Avito; the code and the logic are written from scratch.
