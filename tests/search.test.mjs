@@ -329,6 +329,23 @@ test('flagAds: each suspect body phrase alone sets suspect_text', () => {
   assert.ok(flagAds([mkAd(1, 100, { body: 'Дисплей бывает НЕ РЕАГИРУЕТ на касание' })], NOW)[0].flags.includes('suspect_text'));
 });
 
+test('flagAds: defects in the words sellers really use', () => {
+  for (const body of ['дефект экран сломан он под замену', 'Повреждена матрица все работает идеально', 'Висит локнутый на айклауде Весь в идеале',
+    'Залочен под оператора', 'Забыт пароль, по поводу айклауда не знаю', 'брался как донор для другого телефона', 'АКБ вздуто', 'Продаю по частям',
+    'пароль от экрана блокировки неизвестен']) {
+    assert.ok(flagAds([mkAd(1, 100, { body })], NOW)[0].flags.includes('suspect_text'), body);
+  }
+  for (const body of ['Не сломан, не вскрывался', 'Без повреждений', 'Повреждений нет']) {
+    assert.ok(!flagAds([mkAd(1, 100, { body })], NOW)[0].flags.includes('suspect_text'), body);
+  }
+});
+
+test('flagAds: a title that says the thing does not work or is sold in parts is suspect_title', () => {
+  for (const title of ['iPhone 13 128gb (нерабочий)', 'Rover 75 2.0V6 по частям', 'iPhone 13 локнутый', 'Айфон 13 залочен', 'Плата донор iPhone 13']) {
+    assert.ok(flagAds([mkAd(1, 100, { title, body: null })], NOW)[0].flags.includes('suspect_title'), title);
+  }
+});
+
 test('flagAds: a defect that the text denies is not a defect', () => {
   for (const body of ['Не заблокирован, iCloud чистый', 'Экран не разбит и не треснул', 'Без трещин и сколов', 'Трещин нет, сколов нет',
     'Неисправностей нет', 'Ни разу не разбит', 'Нет трещин']) {

@@ -327,33 +327,35 @@ function defectMarket(bodies, ids = BIDS) {
     return { result: { ...BRAW[id], body: bodies[id] ?? 'Отличное состояние, полный комплект' } };
   });
 }
+const ids = (r) => r.picked.map((x) => x.id);
 
-test('compareBest: a card whose text names a defect leaves the pick, the next cheapest takes its place', async () => {
+test('compareBest: a card whose text names a defect is not dropped: it goes after the cards without one, with the piece of text', async () => {
   const tr = defectMarket({ [BIDS[0]]: 'Экран разбит, на запчасти', [BIDS[2]]: 'Не включается после воды' });
   const r = await bestOf(tr);
-  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[1]}`, `${BIDS[3]}`, `${BIDS[4]}`]);
-  assert.deepEqual(r.ads.map((a) => a.id), r.picked.map((x) => x.id));
-  assert.equal(r.count, 3);
-  assert.deepEqual(r.skipped.defect.map((x) => x.id), [`${BIDS[0]}`, `${BIDS[2]}`]);
-  assert.deepEqual(Object.keys(r.skipped.defect[0]).sort(), ['found', 'id', 'price_byn', 'url']);
-  assert.equal(r.skipped.defect[0].price_byn, BPRICES[0]);
-  assert.equal(r.skipped.defect[0].url, `https://www.kufar.by/item/${BIDS[0]}`);
-  assert.ok(r.skipped.defect[0].found.includes('разбит'), r.skipped.defect[0].found);
-  // seven candidates: three picked, two with a defect, two not looked at
+  assert.deepEqual(ids(r), [BIDS[1], BIDS[3], BIDS[4], BIDS[0], BIDS[2]].map(String));
+  assert.deepEqual(r.ads.map((a) => a.id), ids(r));
+  assert.equal(r.count, 5);
+  assert.deepEqual(r.picked.slice(0, 3).map((x) => x.defect), [null, null, null]);
+  assert.ok(r.picked[3].defect.includes('разбит'), r.picked[3].defect);
+  assert.ok(r.picked[4].defect.includes('Не включается'), r.picked[4].defect);
+  assert.deepEqual(Object.keys(r.picked[3]).sort(), ['defect', 'id', 'price_byn', 'stale', 'vs_median_pct']);
+  assert.equal(r.picked[3].price_byn, BPRICES[0]);
+  // seven candidates: five opened, two not looked at
   assert.equal(r.skipped.other, 2);
   assert.equal(r.skipped.stale, 0);
+  assert.deepEqual(Object.keys(r.skipped).sort(), ['other', 'stale', 'too_cheap']);
 });
 
-test('compareBest: without defects skipped.defect is an empty list and the counts are those of pickBest', async () => {
+test('compareBest: without defects every picked card has defect null and the counts are those of pickBest', async () => {
   const r = await bestOf(defectMarket({}));
-  assert.deepEqual(r.skipped.defect, []);
+  assert.deepEqual(r.picked.map((x) => x.defect), [null, null, null]);
   assert.equal(r.skipped.other, 4);
 });
 
-test('compareBest: a defect the text denies does not move the card out', async () => {
+test('compareBest: a defect the text denies leaves the card where its price puts it', async () => {
   const r = await bestOf(defectMarket({ [BIDS[0]]: 'Не заблокирован, трещин нет' }));
-  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[0]}`, `${BIDS[1]}`, `${BIDS[2]}`]);
-  assert.deepEqual(r.skipped.defect, []);
+  assert.deepEqual(ids(r), [BIDS[0], BIDS[1], BIDS[2]].map(String));
+  assert.equal(r.picked[0].defect, null);
 });
 
 test('compareBest: no more than three cards per place are opened; what is found by then is the answer', async () => {
@@ -361,25 +363,21 @@ test('compareBest: no more than three cards per place are opened; what is found 
   const tr = defectMarket(bad);
   const r = await bestOf(tr, { top: 2 });
   assert.equal(tr.calls.filter((c) => itemIdOf(c.path)).length, 6);
-  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[4]}`, `${BIDS[5]}`]);
-  assert.equal(r.skipped.defect.length, 4);
+  assert.deepEqual(ids(r), [BIDS[4], BIDS[5], BIDS[0], BIDS[1], BIDS[2], BIDS[3]].map(String));
   assert.equal(r.skipped.other, 1);
 });
 
-test('compareBest: fewer than two cards without a defect -> NOT_ENOUGH with found and the defect cards', async () => {
+test('compareBest: when every opened card names a defect they are still the answer, none first by right', async () => {
   const bad = Object.fromEntries(BIDS.slice(0, 6).map((id) => [id, 'Не работает экран']));
   const tr = defectMarket(bad);
-  await assert.rejects(bestOf(tr, { top: 2 }), (e) => {
-    assert.equal(e.code, 'NOT_ENOUGH');
-    assert.equal(e.details.found, 0);
-    assert.equal(e.details.total_on_site, BIDS.length);
-    assert.deepEqual(e.details.defect.map((x) => x.id), BIDS.slice(0, 6).map(String));
-    return true;
-  });
+  const r = await bestOf(tr, { top: 2 });
   assert.equal(tr.calls.filter((c) => itemIdOf(c.path)).length, 6);
+  assert.deepEqual(ids(r), BIDS.slice(0, 6).map(String));
+  assert.ok(r.picked.every((x) => typeof x.defect === 'string'));
+  assert.equal(r.count, 6);
 });
 
-test('compareBest: a card that is gone still takes its place, a defect card does not', async () => {
+test('compareBest: a card that is gone still takes its place, a card with a defect does not', async () => {
   const tr = fakeTransport((p) => {
     const id = itemIdOf(p);
     if (!id) return pageOf(BIDS.map((x) => BRAW[x]), BIDS.length);
@@ -388,8 +386,22 @@ test('compareBest: a card that is gone still takes its place, a defect card does
   });
   const r = await bestOf(tr);
   assert.deepEqual(r.missing, [`${BIDS[1]}`]);
-  assert.deepEqual(r.picked.map((x) => x.id), [`${BIDS[2]}`, `${BIDS[3]}`]);
-  assert.deepEqual(r.skipped.defect.map((x) => x.id), [`${BIDS[0]}`]);
+  assert.deepEqual(ids(r), [BIDS[2], BIDS[3], BIDS[0]].map(String));
+});
+
+test('compareBest: fewer than two cards still on the site -> NOT_FOUND with the missing ones', async () => {
+  const two = [BIDS[0], BIDS[1]];
+  const tr = fakeTransport((p) => {
+    const id = itemIdOf(p);
+    if (!id) return pageOf(two.map((x) => BRAW[x]), 2);
+    if (id === `${BIDS[1]}`) throw new KufarError('NOT_FOUND', 'Не найдено', { status: 404 });
+    return { result: BRAW[id] };
+  });
+  await assert.rejects(bestOf(tr), (e) => {
+    assert.equal(e.code, 'NOT_FOUND');
+    assert.deepEqual(e.details.missing, [`${BIDS[1]}`]);
+    return true;
+  });
 });
 
 test('compareBest: fewer than 2 picked -> NOT_ENOUGH with found and total_on_site, no card is requested', async () => {
