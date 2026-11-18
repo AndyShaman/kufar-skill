@@ -455,3 +455,12 @@ test('defectIn: «вздулась», «треснул», «под замену�
 test('defectIn: with no space after the word the word is kept whole', () => {
   assert.ok(defectIn(`Разбита${'x'.repeat(60)}`).startsWith('Разбита'));
 });
+
+test('flagAds: a title that denies the word is not suspect_title', () => {
+  for (const title of ['iPhone 13, не донор', 'Телефон не на запчасти', 'Рабочий, не заблокирован']) {
+    assert.ok(!flagAds([mkAd(1, 100, { title })], NOW)[0].flags.includes('suspect_title'), title);
+  }
+  for (const title of ['iPhone 13 на запчасти', 'Донор iPhone 13', 'Не включается iPhone']) {
+    assert.ok(flagAds([mkAd(1, 100, { title })], NOW)[0].flags.includes('suspect_title'), title);
+  }
+});
