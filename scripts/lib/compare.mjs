@@ -1,6 +1,7 @@
 import { KufarError } from './errors.mjs';
 import { fetchAd, parseAdRef } from './ads.mjs';
 import { estimatePrice } from './price.mjs';
+import { defectIn } from './search.mjs';
 
 const shown = (p) => p.text ?? p.value;
 
@@ -54,17 +55,40 @@ export function pickBest(estimate, top = 3) {
   };
 }
 
+// the cheapest cards are opened and read. A card whose text names a defect is cheaper for that reason: it is not dropped
+// and not first, it goes after the cards without one, with the piece of text. Three cards per place are opened at most
 export async function compareBest(transport, opts, { top = 3, now, clock } = {}) {
   const estimate = await estimatePrice(transport, { ...opts, now, clock });
-  const { picked, skipped } = pickBest(estimate, top);
-  if (picked.length < 2) {
+  const { picked: queue, skipped: { too_cheap } } = pickBest(estimate, Infinity);
+  if (queue.length < 2) {
     throw new KufarError('NOT_ENOUGH', 'Подходящих объявлений меньше двух: сравнивать нечего',
-      { found: picked.length, total_on_site: estimate.total_on_site });
+      { found: queue.length, total_on_site: estimate.total_on_site });
   }
-  const r = await compare(transport, picked.map((x) => x.id));
-  const fetched = new Set(r.ads.map((ad) => ad.id));
+  const clean = [];
+  const flawed = [];
+  const missing = [];
+  let opened = 0;
+  while (opened < queue.length && opened < top * 3 && clean.length + missing.length < top) {
+    const c = queue[opened++];
+    let ad;
+    try {
+      ad = await fetchAd(transport, c.id);
+    } catch (e) {
+      if (e.code !== 'NOT_FOUND') throw e;
+      missing.push(c.id);
+      continue;
+    }
+    const defect = defectIn(ad.body);
+    (defect ? flawed : clean).push({ pick: { ...c, defect }, ad });
+  }
+  const found = [...clean, ...flawed];
+  if (found.length < 2) throw new KufarError('NOT_FOUND', 'Для сравнения нужно хотя бы два объявления, которые ещё есть на Куфаре', { missing });
+  const ads = found.map((x) => x.ad);
+  const rest = queue.slice(opened);
   return {
     group: estimate.group, stats: estimate.stats, reliability: estimate.reliability,
-    picked: picked.filter((x) => fetched.has(x.id)), skipped, ...r,
+    picked: found.map((x) => x.pick),
+    skipped: { too_cheap, stale: rest.filter((c) => c.stale).length, other: rest.filter((c) => !c.stale).length },
+    count: ads.length, ads, missing, ...compareAds(ads),
   };
 }

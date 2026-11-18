@@ -5,10 +5,24 @@ import { ageByClock } from './clock.mjs';
 const SORTS = { new: 'lst.d', old: 'lst.a', cheap: 'prc.a', expensive: 'prc.d' };
 const RESERVED = new Set(['cat', 'query', 'lang', 'sort', 'size', 'cursor', 'prc', 'rgn']);
 const MAX_KOPECKS = 2000000000;
-const SUSPECT_WORDS = ['запчаст', 'на разбор', 'на детали', 'куплю', 'заблокирован', 'icloud', 'не включается', 'под восстановление'];
-// the text of a card is longer than a title: «icloud чистый» and «куплю» in it say nothing, a defect does
-const SUSPECT_TEXT = ['запчаст', 'на разбор', 'на детали', 'заблокирован', 'не включается', 'под восстановление',
-  'не работает', 'не реагирует', 'неисправ', 'разбит', 'треснул', 'требует ремонта'];
+const SUSPECT_WORDS = ['запчаст', 'на разбор', 'на детали', 'по частям', 'куплю', 'заблокирован', 'залочен', 'локнут', 'icloud', 'не включается',
+  'нерабоч', 'донор', 'под восстановление'];
+// the text of a card is longer than a title: «icloud чистый» and «куплю» in it say nothing, a defect does.
+// A defect the text denies («не заблокирован», «без трещин», «трещин нет») is not one; neither are spare parts that come with the thing
+const DENIED = '(?<!(?:^|[^а-яё])(?:не|ни|без|нет)\\s+)';
+const DEFECT_TEXT = new RegExp([
+  '(?:на|под|по)\\s+запчаст', 'по\\s+частям', '(?:на|под)\\s+разбор', 'на\\s+детали', '(?:на|под)\\s+восстановлени', '(?:под|нужен)\\s+ремонт',
+  'донор', 'нерабоч', 'забыт\\s+пароль', 'пароль[^.!?]{0,40}неизвест',
+  'требу[ею]т(?:ся)?\\s+ремонт', 'не\\s+включается', 'не\\s+работа[ею]т', 'не\\s+реагиру[ею]т', 'не\\s+заводится', 'не\\s+на\\s+ходу',
+  'после\\s+дтп', `(?<![а-яё])${DENIED}(?:заблокирован|залочен|локнут|разбит|сломан|тресну|трещин|поврежд|вздут|неисправ|(?<!\\d[\\s-]?)бит(?:ый|ая|ое|ые|а|о|ы)?(?![а-яё]))(?![а-яё]*\\s+нет(?![а-яё]))`,
+].join('|'), 'i');
+
+// the piece of a card's text that names a defect, or null
+export function defectIn(body) {
+  const m = typeof body === 'string' ? DEFECT_TEXT.exec(body) : null;
+  if (!m) return null;
+  return body.slice(Math.max(0, m.index - 30), m.index + m[0].length + 30).replace(/\s+/g, ' ').trim();
+}
 
 const bad = (message, details) => new KufarError('BAD_ARGS', message, details);
 
@@ -90,8 +104,7 @@ export function flagAds(ads, now = Date.now(), clock = null) {
     const title = String(ad.title ?? '').toLowerCase();
     if (SUSPECT_WORDS.some((w) => title.includes(w))) flags.push('suspect_title');
     // only a card carries its text; a search result does not
-    const body = typeof ad.body === 'string' ? ad.body.toLowerCase() : '';
-    if (SUSPECT_TEXT.some((w) => body.includes(w))) flags.push('suspect_text');
+    if (defectIn(ad.body)) flags.push('suspect_text');
     if (ad.seller_key) {
       const key = `${ad.seller_key}\u0000${title.trim()}\u0000${ad.price_byn}`;
       if (seen.has(key)) flags.push('duplicate');
