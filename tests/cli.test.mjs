@@ -1122,7 +1122,7 @@ globalThis.WebSocket = class {
 globalThis.fetch = async (url) => {
   const u = new URL(url);
   const status = u.searchParams.get('status');
-  fs.appendFileSync(log, JSON.stringify({ path: u.pathname, status }) + '\\n');
+  fs.appendFileSync(log, JSON.stringify({ path: u.pathname, status, size: u.searchParams.get('size') ?? undefined }) + '\\n');
   if (u.pathname === '/search-api/v2/search/rendered-paginated') return json({ ads: found, total: found.length, pagination: { pages: [] } });
   if (u.pathname === '/my-items-v2/v2/items') return json({ ads: items[status] ?? [] });
   if (messages && /^\\/messaging-api\\/v4\\/conversations\\/[^/]+\\/messages$/.test(u.pathname)) return json(messages);
@@ -1481,4 +1481,10 @@ test('kufar price: comparables_total by default, --full gives the answer without
   assert.equal(full.status, 0, full.stdout);
   assert.equal('comparables_total' in full.json, false);
   assert.equal(full.json.comparables.length, short.json.comparables.length);
+});
+
+test('kufar search: a page is 20 listings by default, --limit sets another size', async () => {
+  const sizeOf = (r) => r.requests.find((q) => q.path === '/search-api/v2/search/rendered-paginated').size;
+  assert.equal(sizeOf(await runFake(() => ['search', '--cat', '17010'])), '20');
+  assert.equal(sizeOf(await runFake(() => ['search', '--cat', '17010', '--limit', '50'])), '50');
 });

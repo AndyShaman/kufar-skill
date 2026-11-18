@@ -57,3 +57,12 @@ test('briefAd: a characteristic with nothing in its value is left out', () => {
   const b = briefAd(mkAd(1, 1, { params: { d: P('Даты заезда-выезда', ', , , ', 'dt'), g: P('Количество гостей', '3', 'gs') } }));
   assert.deepEqual(b.params, { 'Количество гостей': '3' });
 });
+
+test('briefAd: a long value is cut at whole words to about 60 characters', () => {
+  const long = 'Холодильник, СВЧ-печь, Посудомоечная машина, Посуда/столовые приборы, Кофеварка, Электрический чайник';
+  const b = briefAd(mkAd(1, 1, { params: { k: P('На кухне', long, 'kt'), m: P('Метро', 'Восток', 'mee') } }));
+  assert.ok(b.params['На кухне'].length <= 61, b.params['На кухне']);
+  assert.ok(b.params['На кухне'].endsWith('…'));
+  assert.ok(long.startsWith(b.params['На кухне'].slice(0, -1)));
+  assert.equal(b.params['Метро'], 'Восток');
+});
