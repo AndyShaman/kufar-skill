@@ -8,7 +8,7 @@ import {
 import * as authMod from '../scripts/lib/auth.mjs';
 import {
   tmpDir, rejectsCode, throwsCode, NOW, DAY, makeToken, goodToken, GOOD_EXP_SEC, errText,
-  liveToken, fakeFetch, emptyRes, jsonRes, headersOf, assertNoSignoutAll,
+  liveToken, fakeFetch, emptyRes, jsonRes, headersOf, assertNoSignoutAll, hangUntilAbort,
 } from './helpers.mjs';
 
 const now = () => NOW;
@@ -340,9 +340,7 @@ test('logout: a throwing fetchImpl -> REVOKE_FAILED, auth.json stays, no key and
 test('logout: no answer within timeoutMs -> REVOKE_FAILED, auth.json stays', { timeout: 5000 }, async () => {
   const { dir, token } = await loggedIn();
   // never answers; fails only when the code under test aborts it
-  const fetchImpl = fakeFetch((url, init) => new Promise((_, reject) => {
-    init.signal?.addEventListener('abort', () => reject(new Error(`ABORT-MARK ${token}`)));
-  }));
+  const fetchImpl = fakeFetch((url, init) => hangUntilAbort(init, () => new Error(`ABORT-MARK ${token}`)));
   await assert.rejects(logout(dir, { fetchImpl, timeoutMs: 30 }), (e) => {
     assert.equal(e.code, 'REVOKE_FAILED');
     assert.ok(!errText(e).includes(token));

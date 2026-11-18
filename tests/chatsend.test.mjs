@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { MAX_TEXT, checkText, confirmCode, sendMessage } from '../scripts/lib/chatsend.mjs';
+import * as chatsend from '../scripts/lib/chatsend.mjs';
 import { rejectsCode, throwsCode, errText, CONV_ID } from './helpers.mjs';
 
 // made-up key: three parts, the second and the third are long enough to count alone
@@ -690,4 +691,33 @@ test('sendMessage adId: SEND_UNCONFIRMED tells to check inbox, with conversation
   const ec = (await c.s).error;
   assert.equal(ec.code, 'SEND_UNCONFIRMED');
   assert.match(ec.message, /inbox/);
+});
+
+// ---- repeatsLast (the function does not exist yet: the module is imported as a namespace) ----
+
+const REPEAT_NOW = Date.parse('2026-11-17T12:00:00Z');
+const REPEAT_DAY = 86_400_000;
+const repeats = (...a) => chatsend.repeatsLast(...a);
+
+test('repeatsLast: the same text a minute ago is a repeat', () => {
+  const at = new Date(REPEAT_NOW - 60_000).toISOString();
+  assert.equal(repeats({ text: 'Да', at }, 'Да', REPEAT_NOW), true);
+});
+
+test('repeatsLast: exactly 24 hours is a repeat, 24 hours and 1 ms is not', () => {
+  assert.equal(repeats({ text: 'Да', at: new Date(REPEAT_NOW - REPEAT_DAY).toISOString() }, 'Да', REPEAT_NOW), true);
+  assert.equal(repeats({ text: 'Да', at: new Date(REPEAT_NOW - REPEAT_DAY - 1).toISOString() }, 'Да', REPEAT_NOW), false);
+});
+
+test('repeatsLast: another text is not a repeat', () => {
+  assert.equal(repeats({ text: 'Да', at: new Date(REPEAT_NOW - 60_000).toISOString() }, 'Нет', REPEAT_NOW), false);
+});
+
+test('repeatsLast: no last message of mine is not a repeat', () => {
+  assert.equal(repeats(null, 'Да', REPEAT_NOW), false);
+});
+
+test('repeatsLast: the same text with an unknown time is a repeat', () => {
+  assert.equal(repeats({ text: 'Да', at: null }, 'Да', REPEAT_NOW), true);
+  assert.equal(repeats({ text: 'Да', at: 'x' }, 'Да', REPEAT_NOW), true);
 });

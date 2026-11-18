@@ -259,7 +259,7 @@ test('trackCheck records a price change', async () => {
   assert.deepEqual((await trackCheck(ctx)).changes, []);
 });
 
-test('trackCheck marks gone ads and stops asking for them', async () => {
+test('trackCheck marks gone ads and keeps asking for them', async () => {
   const { ctx, cards, transport } = await trackCtx();
   await trackAdd(ctx, '1000000001', '');
   cards['1000000001'] = new KufarError('NOT_FOUND', 'gone');
@@ -271,17 +271,64 @@ test('trackCheck marks gone ads and stops asking for them', async () => {
   assert.notEqual(tracked[0].gone_at, null);
   const before = itemCalls(transport).length;
   const again = await trackCheck(ctx);
-  assert.equal(itemCalls(transport).length, before);
-  assert.equal(again.checked, 0);
+  assert.equal(itemCalls(transport).length, before + 1);
+  assert.equal(again.checked, 1);
 });
 
-test('trackCheck.checked counts only requested cards', async () => {
+test('trackCheck.checked counts every tracked card, gone ones included', async () => {
   const { ctx, cards } = await trackCtx();
   await trackAdd(ctx, '1000000001', '');
   await trackAdd(ctx, '1000000002', '');
   cards['1000000001'] = new KufarError('NOT_FOUND', 'gone');
   assert.equal((await trackCheck(ctx)).checked, 2);
-  assert.equal((await trackCheck(ctx)).checked, 1);
+  assert.equal((await trackCheck(ctx)).checked, 2);
+});
+
+test('trackCheck: a gone listing that came back is reported as back, gone_at is cleared, the price is appended', async () => {
+  const { ctx, cards, stateDir } = await trackCtx();
+  await trackAdd(ctx, '1000000001', '');
+  cards['1000000001'] = new KufarError('NOT_FOUND', 'gone');
+  await trackCheck(ctx);
+  cards['1000000001'] = rawAdOf({ id: 1000000001, price: 500 });
+  const r = await trackCheck(ctx);
+  assert.equal(r.checked, 1);
+  assert.deepEqual(r.changes, [{
+    id: '1000000001', title: 'Телефон 1000000001', url: 'https://www.kufar.by/item/1000000001',
+    change: 'back', old_price: 620, price_byn: 500,
+  }]);
+  const e = (await readFile(stateDir, 'tracked.json'))['1000000001'];
+  assert.equal(e.gone_at, null);
+  assert.equal(e.history.length, 2);
+  assert.equal(e.history[1].price_byn, 500);
+});
+
+test('trackCheck: a gone listing that came back at the same price adds nothing to the history', async () => {
+  const { ctx, cards, stateDir } = await trackCtx();
+  await trackAdd(ctx, '1000000001', '');
+  cards['1000000001'] = new KufarError('NOT_FOUND', 'gone');
+  await trackCheck(ctx);
+  cards['1000000001'] = rawAdOf({ id: 1000000001, price: 620 });
+  const r = await trackCheck(ctx);
+  assert.deepEqual(r.changes.map((c) => c.change), ['back']);
+  const e = (await readFile(stateDir, 'tracked.json'))['1000000001'];
+  assert.equal(e.gone_at, null);
+  assert.equal(e.history.length, 1);
+});
+
+test('trackCheck: a gone listing that is still gone is requested and counted, reports nothing, keeps gone_at', async () => {
+  const { ctx, cards, transport, stateDir } = await trackCtx();
+  await trackAdd(ctx, '1000000001', '');
+  cards['1000000001'] = new KufarError('NOT_FOUND', 'gone');
+  await trackCheck(ctx);
+  const goneAt = (await readFile(stateDir, 'tracked.json'))['1000000001'].gone_at;
+  assert.notEqual(goneAt, null);
+  const before = itemCalls(transport).length;
+  const later = { ...ctx, now: () => NOW + 86_400_000 };
+  const r = await trackCheck(later);
+  assert.equal(itemCalls(transport).length, before + 1);
+  assert.equal(r.checked, 1);
+  assert.deepEqual(r.changes, []);
+  assert.equal((await readFile(stateDir, 'tracked.json'))['1000000001'].gone_at, goneAt);
 });
 
 test('trackCheck rethrows other errors', async () => {

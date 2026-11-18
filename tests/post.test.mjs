@@ -592,7 +592,10 @@ test('insertAd: the key is in no refusal or failure', async () => {
 const SUBMIT_AD = { category: '2040', price: '5900' };
 const CODE = '0123456789ab';
 const recordFile = (dir) => path.join(dir, 'post-last.json');
+// post-last.json is a list of { code, at, ad_id? } of the last 24 hours; a missing file is an empty list
 const readRecord = async (dir) => JSON.parse(await fs.readFile(recordFile(dir), 'utf8'));
+const entriesOf = async (dir) => (await exists(recordFile(dir)) ? readRecord(dir) : []);
+const CODE_B = 'abcdefabcdef';
 const exists = (f) => fs.stat(f).then(() => true, () => false);
 const PHOTOS = [
   { file: '/x/1.jpg', ext: 'jpg', bytes: 3, sha256: 'a', data: Buffer.from('one') },
@@ -637,7 +640,7 @@ test('submitAd: on success the answer and post-last.json', async () => {
   const dir = await tmpDir();
   const r = await submit(dir, submitFetch());
   assert.deepEqual(r, { ad_id: '123', pending_slot: false });
-  assert.deepEqual(await readRecord(dir), { code: CODE, at: NOW, ad_id: '123' });
+  assert.deepEqual(await readRecord(dir), [{ code: CODE, at: NOW, ad_id: '123' }]);
 });
 
 test('submitAd: before the insert request the record holds code and at, without ad_id', async () => {
@@ -648,7 +651,7 @@ test('submitAd: before the insert request the record holds code and at, without 
     return jsonRes(200, { ad_id: 5, pending_slot: false });
   });
   await submit(dir, f);
-  assert.deepEqual(seen, { code: CODE, at: NOW });
+  assert.deepEqual(seen, [{ code: CODE, at: NOW }]);
 });
 
 test('submitAd: a second call with the same code -> ALREADY_POSTED with ad_id, no request', async () => {
@@ -667,8 +670,9 @@ test('submitAd: after POST_UNCONFIRMED the record stays without ad_id', async ()
   const dir = await tmpDir();
   await rejectsCode(submit(dir, submitFetch(() => jsonRes(500, {}))), 'POST_UNCONFIRMED');
   const rec = await readRecord(dir);
-  assert.equal(rec.code, CODE);
-  assert.equal('ad_id' in rec, false);
+  assert.equal(rec.length, 1);
+  assert.equal(rec[0].code, CODE);
+  assert.equal('ad_id' in rec[0], false);
 });
 
 test('submitAd: after POST_UNCONFIRMED a second call with the same code -> POST_UNCONFIRMED, no request', async () => {
@@ -686,7 +690,7 @@ for (const [name, res, code] of [
   test(`submitAd: after ${name} the record is gone and a second call sends again`, async () => {
     const dir = await tmpDir();
     await rejectsCode(submit(dir, submitFetch(res)), code);
-    assert.equal(await exists(recordFile(dir)), false);
+    assert.deepEqual(await entriesOf(dir), []);
     const f = submitFetch();
     assert.deepEqual(await submit(dir, f), { ad_id: '123', pending_slot: false });
     assert.equal(insertCalls(f).length, 1);
@@ -703,7 +707,7 @@ test('submitAd: a failed photo upload leaves no record and makes no insert reque
 
 test('submitAd: a record older than 24 hours does not block', async () => {
   const dir = await tmpDir();
-  await fs.writeFile(recordFile(dir), JSON.stringify({ code: CODE, at: NOW - DAY - 1000, ad_id: '99' }));
+  await fs.writeFile(recordFile(dir), JSON.stringify([{ code: CODE, at: NOW - DAY - 1000, ad_id: '99' }]));
   const f = submitFetch();
   assert.deepEqual(await submit(dir, f), { ad_id: '123', pending_slot: false });
   assert.equal(insertCalls(f).length, 1);
@@ -711,9 +715,63 @@ test('submitAd: a record older than 24 hours does not block', async () => {
 
 test('submitAd: a record with another code does not block', async () => {
   const dir = await tmpDir();
-  await fs.writeFile(recordFile(dir), JSON.stringify({ code: 'ffffffffffff', at: NOW, ad_id: '99' }));
+  await fs.writeFile(recordFile(dir), JSON.stringify([{ code: 'ffffffffffff', at: NOW, ad_id: '99' }]));
   const f = submitFetch();
   assert.deepEqual(await submit(dir, f), { ad_id: '123', pending_slot: false });
+  assert.equal(insertCalls(f).length, 1);
+});
+
+// the record is a list: another submission in between does not make a rerun forget an earlier one
+
+test('submitAd: A, then B, then A again within the day -> ALREADY_POSTED with the ad_id of A, no request', async () => {
+  const dir = await tmpDir();
+  await submit(dir, submitFetch(() => jsonRes(200, { ad_id: 1, pending_slot: false })));
+  await submit(dir, submitFetch(() => jsonRes(200, { ad_id: 2, pending_slot: false })), { code: CODE_B });
+  const f = submitFetch();
+  await assert.rejects(submit(dir, f), (e) => {
+    assert.equal(e.code, 'ALREADY_POSTED');
+    assert.equal(e.details.ad_id, '1');
+    return true;
+  });
+  assert.equal(f.calls.length, 0);
+});
+
+test('submitAd: A is unconfirmed, then B is posted, then A again -> POST_UNCONFIRMED, no request', async () => {
+  const dir = await tmpDir();
+  await rejectsCode(submit(dir, submitFetch(() => jsonRes(500, {}))), 'POST_UNCONFIRMED');
+  await submit(dir, submitFetch(), { code: CODE_B });
+  const f = submitFetch();
+  await rejectsCode(submit(dir, f), 'POST_UNCONFIRMED');
+  assert.equal(f.calls.length, 0);
+});
+
+test('submitAd: a refusal of A removes only the entry of A, B is still remembered', async () => {
+  const dir = await tmpDir();
+  await submit(dir, submitFetch(), { code: CODE_B });
+  await rejectsCode(submit(dir, submitFetch(() => refusal({ common: { message: 'M' } }))), 'POST_REFUSED');
+  const f = submitFetch();
+  await rejectsCode(submit(dir, f, { code: CODE_B }), 'ALREADY_POSTED');
+  assert.equal(f.calls.length, 0);
+});
+
+test('submitAd: the record is a list with code, at and ad_id of each submission; a run 24 hours later drops the old ones', async () => {
+  const dir = await tmpDir();
+  await submit(dir, submitFetch(() => jsonRes(200, { ad_id: 1, pending_slot: false })));
+  await submit(dir, submitFetch(() => jsonRes(200, { ad_id: 2, pending_slot: false })), { code: CODE_B });
+  assert.deepEqual(await readRecord(dir), [
+    { code: CODE, at: NOW, ad_id: '1' },
+    { code: CODE_B, at: NOW, ad_id: '2' },
+  ]);
+  const later = NOW + DAY + 1000;
+  await submit(dir, submitFetch(() => jsonRes(200, { ad_id: 3, pending_slot: false })), { code: 'ccccccccccc1', now: () => later });
+  assert.deepEqual(await readRecord(dir), [{ code: 'ccccccccccc1', at: later, ad_id: '3' }]);
+});
+
+test('submitAd: (guard) the same code 24 hours and 1 ms later goes to the network again', async () => {
+  const dir = await tmpDir();
+  await submit(dir, submitFetch());
+  const f = submitFetch();
+  assert.deepEqual(await submit(dir, f, { now: () => NOW + DAY + 1 }), { ad_id: '123', pending_slot: false });
   assert.equal(insertCalls(f).length, 1);
 });
 

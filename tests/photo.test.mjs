@@ -329,3 +329,34 @@ test('cleanPhoto: png chunks a picture does not need (C2PA, private ones) are dr
   assert.deepEqual(r.data, png(IHDR, PHYS, IDAT, IEND));
   assert.deepEqual(r.removed, ['other']);
 });
+
+// ---- JPEG: an APP0 segment is kept only as a JFIF header without a thumbnail ----
+
+test('cleanPhoto jpeg: a JFXX APP0 (thumbnail extension) is dropped and counted as other', () => {
+  const jfxx = seg(0xe0, Buffer.concat([Buffer.from('JFXX\0\x10', 'latin1'), Buffer.alloc(20, 0x55)]));
+  const r = cleanPhoto(jpeg(APP0, jfxx, APP2(), DQT, SOF), 'jpg');
+  assert.equal(countOf(r.data, 'JFXX'), 0);
+  assert.ok(r.removed.includes('other'));
+  assert.deepEqual(r.data, CLEAN);
+});
+
+test('cleanPhoto jpeg: a JFIF thumbnail is cut out, the header stays with both thumbnail sizes 0', () => {
+  const thumb = Buffer.alloc(12, 0x77);
+  const withThumb = seg(0xe0, Buffer.concat([Buffer.from('JFIF\0\x01\x01\0\0\x01\0\x01\x02\x02', 'latin1'), thumb]));
+  const r = cleanPhoto(jpeg(withThumb, APP2(), DQT, SOF), 'jpg');
+  assert.equal(countOf(r.data, thumb.toString('latin1')), 0);
+  assert.ok(r.removed.includes('other'));
+  const app0 = r.data.subarray(2, 2 + 2 + 16);
+  assert.deepEqual(app0.subarray(0, 4), Buffer.from([0xff, 0xe0, 0x00, 0x10]));
+  assert.equal(app0.toString('latin1', 4, 9), 'JFIF\0');
+  assert.deepEqual([app0[16], app0[17]], [0, 0]);
+  assert.deepEqual(r.data, CLEAN);
+});
+
+test('cleanPhoto jpeg: an APP0 that is neither JFIF nor JFXX is dropped and counted as other', () => {
+  const avi = seg(0xe0, Buffer.concat([Buffer.from('AVI1\0', 'latin1'), Buffer.alloc(10, 0x33)]));
+  const r = cleanPhoto(jpeg(APP0, avi, APP2(), DQT, SOF), 'jpg');
+  assert.equal(countOf(r.data, 'AVI1'), 0);
+  assert.ok(r.removed.includes('other'));
+  assert.deepEqual(r.data, CLEAN);
+});

@@ -388,3 +388,10 @@ export const headersOf = (init) => Object.fromEntries(
 export const assertNoSignoutAll = (calls) => {
   for (const c of calls) assert.ok(!c.url.includes('signout/all'), `request to ${c.url}`);
 };
+
+// a request that never answers: it fails only when the code under test aborts it.
+// The timer of AbortSignal.timeout() does not hold the event loop on Node 22, so the fake holds it itself
+export const hangUntilAbort = (init, makeError = () => init.signal.reason ?? new Error('aborted')) => new Promise((_, reject) => {
+  const hold = setTimeout(() => {}, 60_000);
+  init.signal?.addEventListener('abort', () => { clearTimeout(hold); reject(makeError()); });
+});

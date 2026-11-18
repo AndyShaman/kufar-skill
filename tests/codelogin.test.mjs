@@ -5,7 +5,7 @@ import path from 'node:path';
 import { normalizePhone, requestCode, confirmCode } from '../scripts/lib/codelogin.mjs';
 import {
   tmpDir, rejectsCode, throwsCode, NOW, goodToken, makeToken, errText, DAY,
-  fakeFetch, jsonRes, emptyRes, headersOf,
+  fakeFetch, jsonRes, emptyRes, headersOf, hangUntilAbort,
 } from './helpers.mjs';
 
 const T = { timeout: 5000 };
@@ -235,9 +235,7 @@ test('requestCode: fetchImpl throws -> NETWORK with the fixed message, no except
 });
 
 test('requestCode: no answer within timeoutMs -> NETWORK', T, async () => {
-  const fetchImpl = fakeFetch((url, init) => new Promise((_, reject) => {
-    init.signal?.addEventListener('abort', () => reject(new Error('ABORT-MARK')));
-  }));
+  const fetchImpl = fakeFetch((url, init) => hangUntilAbort(init, () => new Error('ABORT-MARK')));
   await assert.rejects(requestCode({ stateDir: await tmpDir(), phone: PHONE, fetchImpl, now, timeoutMs: 30 }), (e) => {
     assert.equal(e.code, 'NETWORK');
     assert.ok(!errText(e).includes('ABORT-MARK'));
@@ -446,9 +444,7 @@ test('confirmCode: fetchImpl throws -> NETWORK with the fixed message, pending s
 
 test('confirmCode: no answer within timeoutMs -> NETWORK', T, async () => {
   const dir = await pendingDir();
-  const fetchImpl = fakeFetch((url, init) => new Promise((_, reject) => {
-    init.signal?.addEventListener('abort', () => reject(new Error('ABORT-MARK')));
-  }));
+  const fetchImpl = fakeFetch((url, init) => hangUntilAbort(init, () => new Error('ABORT-MARK')));
   await rejectsCode(confirmCode({ stateDir: dir, code: '1234', fetchImpl, now, timeoutMs: 30 }), 'NETWORK');
 });
 

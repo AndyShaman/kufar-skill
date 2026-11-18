@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
-  rejectsCode, errText, goodToken, fakeFetch, jsonRes, emptyRes, headersOf,
+  rejectsCode, errText, goodToken, fakeFetch, jsonRes, emptyRes, headersOf, hangUntilAbort,
 } from './helpers.mjs';
 
 // the module does not exist yet: it is imported inside each test, so the old tests still load
@@ -95,6 +95,24 @@ test('buildEdit: nothing else gets into the ad', async () => {
   for (const k of ['list_id', 'clear_phone_1', 'category_type', 'images', 'is_new_image', 'photos']) {
     assert.equal(k in ad, false, k);
   }
+});
+
+test('buildEdit: a new email alone is a change, not NO_CHANGES', async () => {
+  const r = await build({ changes: { email: 'new@example.com' }, email: 'new@example.com' });
+  assert.deepEqual(r.changed, [{ name: 'email', from: null, to: 'new@example.com' }]);
+});
+
+test('buildEdit: a new email goes next to another change', async () => {
+  const r = await build({ changes: { subject: 'Новое название', email: 'new@example.com' }, email: 'new@example.com' });
+  assert.deepEqual(r.changed.map((c) => c.name).sort(), ['email', 'subject']);
+  assert.deepEqual(r.changed.find((c) => c.name === 'email'), { name: 'email', from: null, to: 'new@example.com' });
+  assert.equal(r.changed.find((c) => c.name === 'subject').to, 'Новое название');
+});
+
+test('buildEdit: (guard) an email passed only as the argument is no change', async () => {
+  await failure(build({ changes: {} }), 'NO_CHANGES');
+  const { changed } = await build();
+  assert.ok(!changed.some((c) => c.name === 'email'));
 });
 
 test('buildEdit: price from changes goes in kopecks', async () => {
@@ -456,9 +474,7 @@ for (const [name, res] of UNCONFIRMED) {
   });
 }
 test('updateAd: a request that does not finish within timeoutMs -> EDIT_UNCONFIRMED', async () => {
-  const hang = async (url, init) => new Promise((_, reject) => {
-    init.signal?.addEventListener('abort', () => reject(init.signal.reason ?? new Error('aborted')));
-  });
+  const hang = async (url, init) => hangUntilAbort(init);
   await rejectsCode(update(hang, { timeoutMs: 30 }), 'EDIT_UNCONFIRMED');
 });
 

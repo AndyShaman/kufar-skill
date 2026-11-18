@@ -312,3 +312,43 @@ test('search passes clock to the flags', async () => {
   assert.equal(b.age_days, 0);
   assert.deepEqual(b.flags, []);
 });
+
+// suspect_text: a body that says the thing is broken or for parts
+const SUSPECT_BODY_PHRASES = ['запчаст', 'на разбор', 'на детали', 'заблокирован', 'не включается', 'под восстановление', 'не работает', 'не реагирует', 'неисправ', 'разбит', 'требует ремонта'];
+
+test('flagAds: a suspect body sets suspect_text and not suspect_title', () => {
+  const [a] = flagAds([mkAd(1, 100, { body: 'Заблокирован, на запчасти' })], NOW);
+  assert.ok(a.flags.includes('suspect_text'));
+  assert.ok(!a.flags.includes('suspect_title'));
+});
+
+test('flagAds: each suspect body phrase alone sets suspect_text', () => {
+  for (const w of SUSPECT_BODY_PHRASES) {
+    assert.ok(flagAds([mkAd(1, 100, { body: `Продаю, ${w}, торг` })], NOW)[0].flags.includes('suspect_text'), w);
+  }
+  assert.ok(flagAds([mkAd(1, 100, { body: 'Дисплей бывает НЕ РЕАГИРУЕТ на касание' })], NOW)[0].flags.includes('suspect_text'));
+});
+
+test('flagAds: (guard) title words are not body words', () => {
+  const [a] = flagAds([mkAd(1, 100, { body: 'iCloud чистый, куплю чехол в подарок' })], NOW);
+  assert.ok(!a.flags.includes('suspect_text'));
+});
+
+test('flagAds: (guard) a null body gives no suspect_text, a suspect title stays suspect_title', () => {
+  assert.ok(!flagAds([mkAd(1, 100, { body: null })], NOW)[0].flags.includes('suspect_text'));
+  assert.deepEqual(flagAds([mkAd(1, 100, { title: 'Куплю запчасти', body: null })], NOW)[0].flags, ['suspect_title']);
+});
+
+test('search: an answer without an array ads is BAD_RESPONSE', async () => {
+  for (const answer of [{}, { ads: null, total: 3 }, { ads: {} }, null]) {
+    await rejectsCode(search(fakeTransport(() => answer), { cat: '1' }, { now: () => NOW }), 'BAD_RESPONSE');
+  }
+});
+
+test('search: (guard) the live shape of an empty result', async () => {
+  const tr = fakeTransport(() => ({ ads: [], total: 0, pagination: null, page_type: 'search_page' }));
+  const r = await search(tr, { cat: '1' }, { now: () => NOW });
+  assert.equal(r.total, 0);
+  assert.deepEqual(r.ads, []);
+  assert.equal(r.next_cursor, null);
+});

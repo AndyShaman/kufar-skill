@@ -160,3 +160,10 @@ test('cleanForPricing: stale flag alone is not a reason to drop', () => {
   assert.equal(r.kept.length, 6);
   assert.ok(r.kept.some((a) => a.id === 'old'));
 });
+
+test('cleanForPricing: (guard) an ad whose only flag is suspect_text is kept', () => {
+  const r = cleanForPricing([...ok(5), f('t', 100, ['suspect_text'])]);
+  assert.equal(r.kept.length, 6);
+  assert.ok(r.kept.some((a) => a.id === 't'));
+  assert.deepEqual(r.dropped, []);
+});

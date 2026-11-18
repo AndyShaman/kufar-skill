@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpDir } from './helpers.mjs';
-import { rawAdOf } from './helpers.mjs';
+import { rawAdOf, CONV_ID, CONV_RAW, MSG_TEXT_RAW } from './helpers.mjs';
 import { photoDir, sizedJpeg, exif } from './photofix.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -263,7 +263,7 @@ test('login --token-stdin with a broken auth.json on stdin -> BAD_TOKEN and noth
   assert.deepEqual(runIn(dir, ['whoami']).json, { logged_in: false });
 });
 
-test('whoami: a logged-in state shows the absolute auth_file path and no login field', async () => {
+test('whoami: a logged-in state shows the absolute auth_file path and the window state of the last login', async () => {
   const dir = await tmpDir();
   runIn(dir, ['login', '--token-stdin'], liveToken());
   await fs.writeFile(path.join(dir, 'login-window.json'), JSON.stringify({ state: 'failed', code: 'LOGIN_TIMEOUT', at: Date.now() }));
@@ -271,7 +271,7 @@ test('whoami: a logged-in state shows the absolute auth_file path and no login f
   assert.equal(who.json.logged_in, true);
   assert.ok(path.isAbsolute(who.json.auth_file));
   assert.equal(who.json.auth_file, path.join(dir, 'auth.json'));
-  assert.equal(who.json.login, undefined);
+  assert.deepEqual(who.json.login, { state: 'failed', code: 'LOGIN_TIMEOUT' });
 });
 
 test('logout on an expired key: no network, the file is removed', async () => {
@@ -1109,13 +1109,23 @@ const items = JSON.parse(process.env.FAKE_ITEMS || '{}');
 const saved = JSON.parse(process.env.FAKE_SAVED || 'null');
 const raws = JSON.parse(process.env.FAKE_RAW || '{}');
 const found = JSON.parse(process.env.FAKE_SEARCH || '[]');
+const messages = JSON.parse(process.env.FAKE_MESSAGES || 'null');
 const json = (body) => new Response(JSON.stringify(body), { status: 200 });
+// a send that reaches the socket must not touch the network: the stub only records the attempt
+globalThis.WebSocket = class {
+  constructor() {
+    fs.appendFileSync(log, JSON.stringify({ path: 'WEBSOCKET', status: null }) + '\\n');
+    setImmediate(() => this.onerror?.());
+  }
+  close() {}
+};
 globalThis.fetch = async (url) => {
   const u = new URL(url);
   const status = u.searchParams.get('status');
   fs.appendFileSync(log, JSON.stringify({ path: u.pathname, status }) + '\\n');
   if (u.pathname === '/search-api/v2/search/rendered-paginated') return json({ ads: found, total: found.length, pagination: { pages: [] } });
   if (u.pathname === '/my-items-v2/v2/items') return json({ ads: items[status] ?? [] });
+  if (messages && /^\\/messaging-api\\/v4\\/conversations\\/[^/]+\\/messages$/.test(u.pathname)) return json(messages);
   if (u.pathname.startsWith('/insertion/v1/processing/load/')) return json({ result: saved });
   const rendered = u.pathname.match(/^\\/search-api\\/v2\\/item\\/(\\d+)\\/rendered$/);
   if (rendered && raws[rendered[1]]) return json({ result: raws[rendered[1]] });
@@ -1137,7 +1147,7 @@ const TREE = { categories: [{ id: 1000, name_ru: 'Родитель', subcategori
 const MY_CONTACT = { name: 'Тестовый Продавец', phone: '375290000000', email: 'a@example.com' };
 
 // runs a CLI command in a fresh state folder with a saved key, the cached tree and form, and the fake fetch
-async function runFake(args, { items = {}, saved = null, draft = {}, raw = {}, search = [] } = {}) {
+async function runFake(args, { items = {}, saved = null, draft = {}, raw = {}, search = [], messages = null } = {}) {
   const dir = await tmpDir();
   const stateDir = path.join(dir, 'state');
   await fs.mkdir(path.join(stateDir, 'cache'), { recursive: true });
@@ -1156,7 +1166,7 @@ async function runFake(args, { items = {}, saved = null, draft = {}, raw = {}, s
   await fs.writeFile(file, JSON.stringify(draft));
   const r = spawnSync(process.execPath, ['--import', preload, CLI, ...args(file)], {
     cwd: ROOT, encoding: 'utf8', timeout: 30000,
-    env: { ...process.env, KUFAR_STATE_DIR: stateDir, FAKE_LOG: logFile, FAKE_ITEMS: JSON.stringify(items), FAKE_SAVED: JSON.stringify(saved), FAKE_RAW: JSON.stringify(raw), FAKE_SEARCH: JSON.stringify(search) },
+    env: { ...process.env, KUFAR_STATE_DIR: stateDir, FAKE_LOG: logFile, FAKE_ITEMS: JSON.stringify(items), FAKE_SAVED: JSON.stringify(saved), FAKE_RAW: JSON.stringify(raw), FAKE_SEARCH: JSON.stringify(search), FAKE_MESSAGES: JSON.stringify(messages) },
   });
   let json;
   try { json = JSON.parse(r.stdout); } catch { json = undefined; }
@@ -1334,4 +1344,84 @@ test('kufar compare: two cards of one seller with the same title and price are f
   const item = await runFake(() => ['item', '1000000003'], { raw });
   assert.deepEqual(r.json.ads[1], item.json.ad);
   assert.ok(!r.json.ads[1].flags.includes('duplicate'), r.stdout);
+});
+
+// ---- audit round: suspect_text through item and compare, send repeat guard, whoami window state, email-only edit ----
+
+const BROKEN_BODY = 'Экран разбит';
+const rawWithBody = (id, price, body) => ({ ...rawAdOf({ id, price }), body });
+
+test('kufar item: a card whose body says it is broken carries suspect_text', async () => {
+  const r = await runFake(() => ['item', '1000000001'], { raw: { 1000000001: rawWithBody(1000000001, 300, BROKEN_BODY) } });
+  assert.equal(r.status, 0, r.stdout);
+  assert.ok(r.json.ad.flags.includes('suspect_text'), r.stdout);
+});
+
+test('kufar compare: only the card whose body says it is broken carries suspect_text', async () => {
+  const raw = { 1000000001: rawWithBody(1000000001, 300, BROKEN_BODY), 1000000002: rawWithBody(1000000002, 400, 'Всё работает') };
+  const r = await runFake(() => ['compare', '1000000001', '1000000002'], { raw });
+  assert.equal(r.status, 0, r.stdout);
+  assert.ok(r.json.ads[0].flags.includes('suspect_text'), r.stdout);
+  assert.ok(!r.json.ads[1].flags.includes('suspect_text'), r.stdout);
+});
+
+// the newest message of the dialog is mine and says the same text, a minute ago
+const lastMineAt = new Date(Date.now() - 60_000).toISOString();
+const MINE_REPLY = { conversation_info: CONV_RAW, messages: [{ ...MSG_TEXT_RAW, is_mine: true, text: 'Да', created_at: lastMineAt }] };
+const socketOpened = (r) => r.requests.some((q) => q.path === 'WEBSOCKET');
+
+test('kufar send --confirm: the same text as my newest message a minute ago -> ALREADY_SENT with its time, no socket opened', async () => {
+  const preview = await runFake(() => ['send', CONV_ID, '--text', 'Да'], { messages: MINE_REPLY });
+  assert.equal(preview.json?.sent, false, preview.stdout);
+  const r = await runFake(() => ['send', CONV_ID, '--text', 'Да', '--confirm', preview.json.confirm], { messages: MINE_REPLY });
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json?.error?.code, 'ALREADY_SENT', r.stdout);
+  assert.equal(r.json.error.details.at, lastMineAt);
+  assert.equal(socketOpened(r), false);
+});
+
+test('kufar send preview: (guard) still a preview with a confirm code, and shows no last_mine', async () => {
+  const r = await runFake(() => ['send', CONV_ID, '--text', 'Да'], { messages: MINE_REPLY });
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.sent, false);
+  assert.match(r.json.confirm, /^[0-9a-f]{12}$/);
+  assert.equal('last_mine' in r.json, false);
+  assert.equal('last_mine' in r.json.preview, false);
+});
+
+test('whoami: a logged-in state shows a failed login window', async () => {
+  const dir = await tmpDir();
+  runIn(dir, ['login', '--token-stdin'], liveToken());
+  await fs.writeFile(path.join(dir, 'login-window.json'), JSON.stringify({ state: 'failed', code: 'LOGIN_CANCELLED', at: Date.now() }));
+  const who = runIn(dir, ['whoami']);
+  assert.equal(who.json.logged_in, true);
+  assert.equal(who.json.auth_file, path.join(dir, 'auth.json'));
+  assert.deepEqual(who.json.login, { state: 'failed', code: 'LOGIN_CANCELLED' });
+});
+
+test('whoami: a logged-in state shows a waiting login window whose worker is alive', async () => {
+  const dir = await tmpDir();
+  runIn(dir, ['login', '--token-stdin'], liveToken());
+  await fs.writeFile(path.join(dir, 'login-window.json'), JSON.stringify({ state: 'waiting', pid: process.pid, started_at: Date.now(), deadline: Date.now() + 300000 }));
+  const who = runIn(dir, ['whoami']);
+  assert.equal(who.json.logged_in, true);
+  assert.equal(who.json.login?.state, 'waiting', who.stdout);
+});
+
+test('whoami: (guard) logged in and no login-window.json -> no login key', async () => {
+  const dir = await tmpDir();
+  runIn(dir, ['login', '--token-stdin'], liveToken());
+  const who = runIn(dir, ['whoami']);
+  assert.equal(who.json.logged_in, true);
+  assert.equal('login' in who.json, false);
+});
+
+test('kufar edit: a new email alone is a preview with the masked email as the change, the address is not printed', async () => {
+  const r = await runFake((f) => ['edit', '1000000001', '--changes', f], {
+    draft: { email: 'new@example.com' }, saved: SAVED_AD, items: { active: [MY_CONTACT] },
+  });
+  assert.equal(r.json?.edited, false, r.stdout);
+  assert.deepEqual(r.json.preview.changes, [{ name: 'email', label: 'Почта', from: null, to: r.json.preview.email }]);
+  assert.equal(r.json.preview.email, 'n…@example.com');
+  assert.ok(!r.stdout.includes('new@example.com'));
 });

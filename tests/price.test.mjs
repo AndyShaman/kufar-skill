@@ -535,3 +535,66 @@ test('like with user params: the user value wins over a by characteristic with t
   await estimatePrice(tr, { like: '1000000001', by: ['phm'], params: { phm: '9999' } });
   assert.equal(searches(tr)[0].query.phm, '9999');
 });
+
+// the general filters (cnd, cmp, dle, ar) do not define the goods: with only them the group is collected by words
+test('general filters only: every request carries the query and the filter, none goes without the query', async () => {
+  const tr = mk(() => pageOf(series(1000000101, SIX), 6));
+  const r = await estimatePrice(tr, { cat: '16040', query: 'thinkpad t480', params: { cnd: '1' } });
+  const s = searches(tr);
+  assert.ok(s.length >= 1);
+  for (const c of s) {
+    assert.equal(c.query.query, 'thinkpad t480');
+    assert.equal(c.query.cnd, '1');
+  }
+  assert.deepEqual(r.unclassified, []);
+  assert.deepEqual(r.group.params, { cnd: '1' });
+  assert.equal(r.group.query, 'thinkpad t480');
+});
+
+for (const params of [{ cmp: '0' }, { dle: '1' }, { ar: '15' }, { cnd: '1', ar: '15' }]) {
+  test(`general filters only: ${JSON.stringify(params)} goes together with the query`, async () => {
+    const tr = mk(() => pageOf(series(1000000101, SIX), 6));
+    const r = await estimatePrice(tr, { cat: '16040', query: 'thinkpad t480', params });
+    const s = searches(tr);
+    assert.ok(s.length >= 1);
+    for (const c of s) {
+      assert.equal(c.query.query, 'thinkpad t480');
+      for (const [k, v] of Object.entries(params)) assert.equal(c.query[k], v);
+    }
+    assert.deepEqual(r.unclassified, []);
+    assert.deepEqual(r.group.params, params);
+  });
+}
+
+test('general filters only without a query is BAD_ARGS and makes no request', async () => {
+  const tr = mk(() => pageOf([]));
+  await rejectsCode(estimatePrice(tr, { cat: '16040', params: { cnd: '1' } }), 'BAD_ARGS');
+  assert.equal(tr.calls.length, 0);
+});
+
+test('(guard) a goods filter with a general one: main requests carry both, the words request only the query', async () => {
+  const tr = mk((q) => (q.query ? pageOf([]) : pageOf(series(1000000101, SIX))));
+  await estimatePrice(tr, { cat: '17010', params: { phm: '5380', cnd: '1' }, query: 'iphone 13' });
+  const s = searches(tr);
+  const main = s.filter((c) => !c.query.query);
+  const words = s.filter((c) => c.query.query);
+  assert.ok(main.length >= 1);
+  for (const c of main) {
+    assert.equal(c.query.phm, '5380');
+    assert.equal(c.query.cnd, '1');
+  }
+  assert.equal(words.length, 1);
+  assert.equal(words[0].query.query, 'iphone 13');
+  assert.equal('phm' in words[0].query, false);
+});
+
+test('like with by cnd and a query: requests carry the query and the listing value together', async () => {
+  const tr = mk(() => pageOf(series(1000000101, SIX)));
+  await estimatePrice(tr, { like: '1000000001', by: ['cnd'], query: 'iphone 13' });
+  const s = searches(tr);
+  assert.ok(s.length >= 1);
+  for (const c of s) {
+    assert.equal(c.query.query, 'iphone 13');
+    assert.equal(c.query.cnd, '1');
+  }
+});

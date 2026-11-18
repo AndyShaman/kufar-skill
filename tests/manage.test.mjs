@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
-  rejectsCode, throwsCode, errText, goodToken, fakeFetch, jsonRes, emptyRes, headersOf,
+  rejectsCode, throwsCode, errText, goodToken, fakeFetch, jsonRes, emptyRes, headersOf, hangUntilAbort,
 } from './helpers.mjs';
 import { VERSION } from '../scripts/lib/transport.mjs';
 
@@ -260,9 +260,7 @@ for (const [name, res] of UNCONFIRMED) {
 }
 
 test('manageAd: a request that does not finish within timeoutMs -> MANAGE_UNCONFIRMED', async () => {
-  const hang = async (u, init) => new Promise((_, reject) => {
-    init.signal?.addEventListener('abort', () => reject(init.signal.reason ?? new Error('aborted')));
-  });
+  const hang = async (u, init) => hangUntilAbort(init);
   await rejectsCode(run(hang, { timeoutMs: 30 }), 'MANAGE_UNCONFIRMED');
 });
 

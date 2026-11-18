@@ -261,6 +261,24 @@ test('myListings: no ads key gives empty list, missing total gives 0', async () 
   assert.equal(r.total, 0);
 });
 
+test('myListings: an items answer that is not an object, or has ads that are not a list, is BAD_RESPONSE', async () => {
+  for (const items of [null, 'x', [], { ads: {} }]) {
+    await rejectsCode(myListings(myTransport({ items })), 'BAD_RESPONSE');
+  }
+});
+
+test('myListings: no ads while the total says there are some is BAD_RESPONSE', async () => {
+  await rejectsCode(myListings(myTransport({ items: { total: 3 } })), 'BAD_RESPONSE');
+});
+
+test('myListings: (guard) no ads past the end of the list, and an empty list, are fine', async () => {
+  const past = await myListings(myTransport({ items: { total: 3 } }), { offset: 20 });
+  assert.deepEqual(past.ads, []);
+  const none = await myListings(myTransport({ items: { ads: [], total: 0 } }));
+  assert.deepEqual(none.ads, []);
+  assert.equal(none.total, 0);
+});
+
 test('myListings: counts reply that is not an array is BAD_RESPONSE', async () => {
   for (const counts of [{}, 'x', null]) {
     await rejectsCode(myListings(myTransport({ counts })), 'BAD_RESPONSE');
@@ -609,8 +627,35 @@ test('sendTarget: one request with the path and limit 1, offset 0', async () => 
 test('sendTarget: result is conversation_id, to and ad from the normalized conversation', async () => {
   const r = await acct.sendTarget(chatTransport({ reply: targetReply() }), CONV_ID);
   const n = normalizeConversation(CONV_RAW);
-  assert.deepEqual(r, { conversation_id: CONV_ID, to: n.with, ad: n.ad });
-  assert.deepEqual(Object.keys(r), ['conversation_id', 'to', 'ad']);
+  assert.deepEqual(r, { conversation_id: CONV_ID, to: n.with, ad: n.ad, last_mine: null });
+  assert.deepEqual(Object.keys(r), ['conversation_id', 'to', 'ad', 'last_mine']);
+});
+
+test('sendTarget: last_mine is the newest message when it is mine, with trimmed text and its time', async () => {
+  const messages = [msg('m1', { is_mine: true, text: '  Да  ', created_at: '2026-11-17T12:41:00.000000Z' }), msg('m0', { is_mine: true, text: 'Старое' })];
+  const r = await acct.sendTarget(chatTransport({ reply: targetReply({ messages }) }), CONV_ID);
+  assert.deepEqual(r.last_mine, { text: 'Да', at: '2026-11-17T12:41:00.000000Z' });
+});
+
+test('sendTarget: last_mine has at null when the message has no created_at', async () => {
+  const messages = [msg('m1', { is_mine: true, text: 'Да', created_at: undefined })];
+  const r = await acct.sendTarget(chatTransport({ reply: targetReply({ messages }) }), CONV_ID);
+  assert.deepEqual(r.last_mine, { text: 'Да', at: null });
+});
+
+test('sendTarget: last_mine is null when the newest message is not mine, has no text, or there are no messages', async () => {
+  const cases = [
+    targetReply({ messages: [msg('m1', { is_mine: false, text: 'Да' }), msg('m0', { is_mine: true, text: 'Да' })] }),
+    targetReply({ messages: [msg('m1', { is_mine: true, text: 5 })] }),
+    targetReply({ messages: [msg('m1', { is_mine: true, text: null })] }),
+    targetReply({ messages: [] }),
+    { conversation_info: conv() },
+  ];
+  for (const reply of cases) {
+    const r = await acct.sendTarget(chatTransport({ reply }), CONV_ID);
+    assert.ok('last_mine' in r);
+    assert.equal(r.last_mine, null);
+  }
 });
 
 test('sendTarget: the id given is returned as given', async () => {
