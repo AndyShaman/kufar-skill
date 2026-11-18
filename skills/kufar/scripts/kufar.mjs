@@ -5,7 +5,7 @@ import { KufarError } from './lib/errors.mjs';
 import { resolveStateDir, cached } from './lib/storage.mjs';
 import { createTransport } from './lib/transport.mjs';
 import { fetchAd, parseAdRef } from './lib/ads.mjs';
-import { findCategories, flattenCategories, parentOf, listParams, findParamValues } from './lib/taxonomy.mjs';
+import { findCategories, flattenCategories, parentOf, listParams, findParamValues, findCatalogValues } from './lib/taxonomy.mjs';
 import { buildSearchQuery, search, flagAds } from './lib/search.mjs';
 import { loadClock } from './lib/clock.mjs';
 import { estimatePrice } from './lib/price.mjs';
@@ -567,9 +567,19 @@ async function run(argv) {
         () => ctx.transport.getJson('/taxonomy-proxy/v1/dispatch', {
           routing: 'web_generalist', parent, category: cat, application: 'ad_listing', platform: 'web',
         }));
-      return values.find === undefined
-        ? { cat, params: listParams(taxonomy.metadata) }
-        : { cat, values: findParamValues(taxonomy.metadata, values.find) };
+      // cars: brand, model and generation live in a catalogue, not in the description of filters
+      const nodesOf = (tag) => ctx.transport.getJson('/catalog/v1/nodes', { tag, view: 'taxonomy' });
+      const brands = await cached(path.join(ctx.stateDir, 'cache', `catalog-${cat}.json`), DAY, () => nodesOf(`category_${cat}`));
+      const hasCatalog = Array.isArray(brands) && brands.length > 0;
+      if (values.find === undefined) {
+        const params = listParams(taxonomy.metadata);
+        return hasCatalog ? { cat, params, catalog: CATALOG_NOTE } : { cat, params };
+      }
+      const fromCatalog = hasCatalog
+        ? await findCatalogValues((tag) => (tag === `category_${cat}` ? brands : nodesOf(tag)), cat, values.find) : [];
+      if (fromCatalog.length) return { cat, values: fromCatalog };
+      const found = { cat, values: findParamValues(taxonomy.metadata, values.find) };
+      return hasCatalog ? { ...found, catalog: CATALOG_NOTE } : found;
     }
     case 'search': {
       const { values } = parse(rest, SEARCH_OPTIONS);
@@ -686,6 +696,13 @@ const STATE_BLOCKED = {
   message: 'Нет доступа к папке состояния. Если чтение папки закрыто настройками агента, запустите утилиту отдельной командой, '
     + 'без |, cd, перенаправлений и переменных перед ней; login --token-stdin при таком запрете выполняет сам пользователь',
 };
+
+const CATALOG_NOTE = 'В этой рубрике марка, модель и поколение ищутся вместе, с маркой латиницей, как на сайте: '
+  + "--find 'Volkswagen Passat B7' даёт фильтры cbnd2, cmdl2, cgen2. Марку и модель бери только из такого ответа: "
+  + 'по другим фильтрам марки и модели находится малая часть объявлений';
+
+// the reader closed the output (… | head): nothing more to say
+process.stdout.on('error', (e) => { if (e.code === 'EPIPE') process.exit(0); else throw e; });
 
 const print = (obj, done) => process.stdout.write(`${JSON.stringify(obj, (k, v) => (k === 'seller_key' ? undefined : v), 2)}\n`, done);
 

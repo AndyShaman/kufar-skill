@@ -21,7 +21,12 @@ const DEFECT_TEXT = new RegExp([
 export function defectIn(body) {
   const m = typeof body === 'string' ? DEFECT_TEXT.exec(body) : null;
   if (!m) return null;
-  return body.slice(Math.max(0, m.index - 30), m.index + m[0].length + 30).replace(/\s+/g, ' ').trim();
+  // about 30 characters on each side, cut at whole words
+  let from = Math.max(0, m.index - 30);
+  let to = Math.min(body.length, m.index + m[0].length + 30);
+  if (from > 0) from += body.slice(from, m.index).search(/\s/) + 1;
+  if (to < body.length) to = m.index + m[0].length + Math.max(0, body.slice(m.index + m[0].length, to).search(/\s\S*$/));
+  return body.slice(from, to).replace(/\s+/g, ' ').trim();
 }
 
 const bad = (message, details) => new KufarError('BAD_ARGS', message, details);

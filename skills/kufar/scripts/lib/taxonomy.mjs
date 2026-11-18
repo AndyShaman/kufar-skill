@@ -50,7 +50,8 @@ export function findParamValues(metadata, text, limit = 30) {
   for (const ref of refsOf(metadata)) {
     for (const v of ref.values ?? []) {
       const label = v.labels?.ru;
-      if (typeof label !== 'string' || !label.toLowerCase().includes(t)) continue;
+      // a word that names the filter itself («память») gives the values of that filter
+      if (typeof label !== 'string' || !(label.toLowerCase().includes(t) || labelOf(ref).toLowerCase().includes(t))) continue;
       const key = `${ref.url_name}\u0000${v.value}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -59,7 +60,43 @@ export function findParamValues(metadata, text, limit = 30) {
   }
   const rank = (x) => {
     const l = x.text.toLowerCase();
-    return l === t ? 0 : l.startsWith(t) ? 1 : 2;
+    return l === t ? 0 : l.startsWith(t) ? 1 : l.includes(t) ? 2 : 3;
   };
-  return found.sort((a, b) => rank(a) - rank(b) || a.text.length - b.text.length).slice(0, limit);
+  return found.sort((a, b) => rank(a) - rank(b) || (rank(a) < 3 ? a.text.length - b.text.length : 0)).slice(0, limit);
+}
+
+const NODE_KIND = { mark: 'Марка', model: 'Модель', generation: 'Поколение' };
+const catalogValue = (n) => {
+  const v = { name: n.params.name ?? null, filter: n.params.url_name, label: NODE_KIND[n.params.node_type] ?? n.params.node_type ?? null,
+    value: n.value, text: n.labels.ru };
+  if (n.params.startYears && n.params.endYears) v.years = `${n.params.startYears}-${n.params.endYears}`;
+  return v;
+};
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Cars: brand, model and generation are not in the description of filters. They are a catalogue read one level per request:
+// the words name the brand, then the model, then the generation. A level the words do not name is listed whole.
+export async function findCatalogValues(nodesOf, cat, text) {
+  let rest = String(text ?? '').toLowerCase();
+  const found = [];
+  let tag = `category_${cat}`;
+  for (let level = 0; level < 4; level += 1) {
+    const nodes = (await nodesOf(tag) ?? []).filter((n) => typeof n?.value === 'string' && typeof n.labels?.ru === 'string'
+      && typeof n.params?.url_name === 'string');
+    let best = null;
+    let at = -1;
+    for (const n of nodes) {
+      const label = n.labels.ru.toLowerCase();
+      const m = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(label)}(?![\\p{L}\\p{N}])`, 'u').exec(rest);
+      if (m && (!best || label.length > best.labels.ru.length)) { best = n; at = m.index; }
+    }
+    if (!best) {
+      if (level > 0) found.push(...nodes.slice(0, 100).map(catalogValue));
+      break;
+    }
+    found.push(catalogValue(best));
+    rest = `${rest.slice(0, at)} ${rest.slice(at + best.labels.ru.length)}`;
+    tag = best.value;
+  }
+  return found;
 }
