@@ -36,7 +36,8 @@ export async function compare(transport, refs) {
 
 // the cheapest listings worth a look, from the floor up when one is given; a price of half the median or less is a reason
 // to check, not a find
-export function pickBest(estimate, top = 3, floor = null) {
+// `byPrice`: the cheapest first whatever their age; otherwise the listings that are not long-listed come first
+export function pickBest(estimate, top = 3, floor = null, byPrice = false) {
   const median = estimate.suggest?.market ?? null;
   const tooCheap = [];
   let cheaper = 0;
@@ -48,13 +49,15 @@ export function pickBest(estimate, top = 3, floor = null) {
     else (c.stale ? stale : live).push(c);
   }
   const fromLive = live.slice(0, top);
-  const fromStale = stale.slice(0, top - fromLive.length);
+  const order = byPrice ? [...live, ...stale].sort((a, b) => a.price_byn - b.price_byn).slice(0, top)
+    : [...fromLive, ...stale.slice(0, top - fromLive.length)];
+  const staleIn = order.filter((c) => c.stale).length;
   return {
     median,
-    picked: [...fromLive, ...fromStale].map((c) => ({
+    picked: order.map((c) => ({
       id: c.id, price_byn: c.price_byn, vs_median_pct: median === null ? null : Math.round((c.price_byn / median - 1) * 100), stale: c.stale,
     })),
-    skipped: { too_cheap: tooCheap, cheaper, stale: stale.length - fromStale.length, other: live.length - fromLive.length },
+    skipped: { too_cheap: tooCheap, cheaper, stale: stale.length - staleIn, other: live.length - (order.length - staleIn) },
   };
 }
 
@@ -65,7 +68,7 @@ export async function compareBest(transport, opts, { top = 3, pick = 'fair', now
   if (pick !== 'fair' && pick !== 'cheap') throw new KufarError('BAD_ARGS', '--pick: fair или cheap', { pick });
   const estimate = await estimatePrice(transport, { ...opts, now, clock });
   const floor = pick === 'fair' ? estimate.suggest?.fast ?? null : null;
-  const { picked: queue, skipped: { too_cheap, cheaper } } = pickBest(estimate, Infinity, floor);
+  const { picked: queue, skipped: { too_cheap, cheaper } } = pickBest(estimate, Infinity, floor, pick === 'cheap');
   if (queue.length < 2) {
     throw new KufarError('NOT_ENOUGH', 'Подходящих объявлений меньше двух: сравнивать нечего',
       { found: queue.length, total_on_site: estimate.total_on_site });

@@ -10,6 +10,7 @@ import { buildSearchQuery, search, flagAds } from './lib/search.mjs';
 import { loadClock } from './lib/clock.mjs';
 import { estimatePrice } from './lib/price.mjs';
 import { compare, compareBest } from './lib/compare.mjs';
+import { briefAd, briefPrice } from './lib/brief.mjs';
 import {
   watchAdd, watchCheck, watchList, watchRemove, trackAdd, trackCheck, trackList, trackRemove,
 } from './lib/watch.mjs';
@@ -38,7 +39,7 @@ const FILTER_OPTIONS = {
   seller: { type: 'string' },
   delivery: { type: 'boolean' },
 };
-const SEARCH_OPTIONS = { ...FILTER_OPTIONS, sort: { type: 'string' }, limit: { type: 'string' }, cursor: { type: 'string' } };
+const SEARCH_OPTIONS = { ...FILTER_OPTIONS, sort: { type: 'string' }, limit: { type: 'string' }, cursor: { type: 'string' }, full: { type: 'boolean' } };
 const PRICE_OPTIONS = {
   cat: { type: 'string' },
   query: { type: 'string' },
@@ -48,6 +49,7 @@ const PRICE_OPTIONS = {
   by: { type: 'string' },
   exclude: { type: 'string' },
   include: { type: 'string' },
+  full: { type: 'boolean' },
 };
 const COMPARE_OPTIONS = {
   cat: { type: 'string' },
@@ -588,7 +590,7 @@ async function run(argv) {
       buildSearchQuery(opts);
       const ctx = await getClockCtx();
       const r = await search(ctx.transport, opts, { now: ctx.now, clock: ctx.clock });
-      return { total: r.total, count: r.ads.length, ads: r.ads, next_cursor: r.next_cursor };
+      return { total: r.total, count: r.ads.length, ads: values.full ? r.ads : r.ads.map(briefAd), next_cursor: r.next_cursor };
     }
     case 'item': {
       const { arg } = parse(rest, {}, 1);
@@ -604,7 +606,8 @@ async function run(argv) {
         exclude: csv(v.exclude), include: csv(v.include), like: v.like, by: csv(v.by),
       };
       const ctx = await getClockCtx();
-      return estimatePrice(ctx.transport, { ...opts, now: ctx.now, clock: ctx.clock });
+      const estimate = await estimatePrice(ctx.transport, { ...opts, now: ctx.now, clock: ctx.clock });
+      return v.full ? estimate : briefPrice(estimate);
     }
     case 'compare':
       return compareCmd(rest);

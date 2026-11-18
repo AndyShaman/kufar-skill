@@ -16,6 +16,7 @@
 
 - рынок: сколько сейчас просят за такую вещь и от чего зависит цена;
 - поиск по словам, рубрике, региону и характеристикам, с пометками у объявлений без цены, «куплю» и «на запчасти»;
+- не только вещи: машины по марке, модели и поколению, квартиры в продажу и в аренду, услуги, вакансии;
 - подбор: несколько вариантов за нормальные деньги с разбором описаний. Что работает без оговорок, что дешевле из-за износа, чему нужен ремонт, а что продают на запчасти. Самые дешёвые покажет, если попросите;
 - оценка цены: дорого это или дёшево, за сколько выставить свою вещь;
 - сравнение нескольких объявлений: чем они различаются и какое выгоднее;
@@ -40,6 +41,7 @@
 - «хочу купить айфон 13, сколько они сейчас стоят и какой брать?»
 - «нужен ноутбук ребёнку для учёбы, рублей до 800»
 - «найди на Куфаре зарядную станцию 7 кВт до 500 рублей в Минске»
+- «сколько стоит снять однокомнатную в Минске и что есть до 1300 рублей?»
 - «дёшево ли это?» и ссылка на объявление
 - «сравни эти три объявления» и ссылки
 - «не развод ли это?» и текст сообщения от покупателя
@@ -71,13 +73,15 @@
 2. В Claude Code как плагин:
 
    ```text
-   /plugin install kufar --marketplace AndyShaman/kufar-skill
+   /plugin marketplace add AndyShaman/kufar-skill
+   /plugin install kufar@kufar-skill
    ```
 
 3. Вручную. Для Claude Code папка скиллов `~/.claude/skills/`, для одного проекта - `.claude/skills/` внутри него; у других агентов папка своя:
 
    ```bash
    git clone https://github.com/AndyShaman/kufar-skill.git
+   mkdir -p ~/.claude/skills
    cp -R kufar-skill/skills/kufar ~/.claude/skills/
    ```
 
@@ -116,7 +120,7 @@ MIT, см. [LICENSE](LICENSE).
 
 ## In English
 
-Kufarych is an agent skill for Kufar.by, the Belarusian classifieds marketplace. It helps you buy and sell used goods: shows what a thing costs right now, picks listings at a fair price and explains why a cheaper one is cheaper, checks listings and messages for scams, watches for new listings, and, after you log in, handles your own listings and chat (post, edit, take down, reply, bargain).
+Kufarych is an agent skill for Kufar.by, the Belarusian classifieds marketplace. It helps you buy and sell used goods, cars and flats (for sale and for rent): shows what a thing costs right now, picks listings at a fair price and explains why a cheaper one is cheaper, checks listings and messages for scams, watches for new listings, and, after you log in, handles your own listings and chat (post, edit, take down, reply, bargain).
 
 It works with any agent that can run shell commands (Claude Code, Codex and others), needs Node.js 22 or newer and has no dependencies: no server, no bot, no MCP. Unofficial, not affiliated with Kufar. The skill's instructions are written in Russian.
 
