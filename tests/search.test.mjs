@@ -314,7 +314,7 @@ test('search passes clock to the flags', async () => {
 });
 
 // suspect_text: a body that says the thing is broken or for parts
-const SUSPECT_BODY_PHRASES = ['запчаст', 'на разбор', 'на детали', 'заблокирован', 'не включается', 'под восстановление', 'не работает', 'не реагирует', 'неисправ', 'разбит', 'требует ремонта'];
+const SUSPECT_BODY_PHRASES = ['запчаст', 'на разбор', 'на детали', 'заблокирован', 'не включается', 'под восстановление', 'не работает', 'не реагирует', 'неисправ', 'разбит', 'треснул', 'требует ремонта'];
 
 test('flagAds: a suspect body sets suspect_text and not suspect_title', () => {
   const [a] = flagAds([mkAd(1, 100, { body: 'Заблокирован, на запчасти' })], NOW);
